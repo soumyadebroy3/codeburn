@@ -326,7 +326,17 @@ function ToolBreakdown({ projects, pw, bw, title, filterPrefix }: { projects: Pr
     <Panel title={title ?? 'Core Tools'} color={PANEL_COLORS.tools} width={pw}>
       <Text dimColor wrap="truncate-end">{''.padEnd(bw + 1 + nw)}{'calls'.padStart(7)}</Text>
       {sorted.slice(0, 10).map(([tool, calls]) => {
-        const display = filterPrefix ? tool.slice(filterPrefix.length) : tool
+        const raw = filterPrefix ? tool.slice(filterPrefix.length) : tool
+        const LANG_NAMES: Record<string, string> = {
+          javascript: 'JavaScript', typescript: 'TypeScript', python: 'Python',
+          rust: 'Rust', go: 'Go', java: 'Java', cpp: 'C++', c: 'C', csharp: 'C#',
+          ruby: 'Ruby', php: 'PHP', swift: 'Swift', kotlin: 'Kotlin',
+          html: 'HTML', css: 'CSS', scss: 'SCSS', json: 'JSON', yaml: 'YAML',
+          sql: 'SQL', shell: 'Shell', shellscript: 'Shell Script', bash: 'Bash',
+          typescriptreact: 'TSX', javascriptreact: 'JSX',
+          markdown: 'Markdown', dockerfile: 'Dockerfile', toml: 'TOML',
+        }
+        const display = filterPrefix ? (LANG_NAMES[raw] ?? raw) : raw
         return (
           <Text key={tool} wrap="truncate-end">
             <HBar value={calls} max={maxCalls} width={bw} />
