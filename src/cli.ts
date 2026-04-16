@@ -125,8 +125,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string) {
   }
   const models = Object.entries(modelMap)
     .sort(([, a], [, b]) => b.cost - a.cost)
-    .map(([name, d]) => ({ name, cost: convertCost(d.cost), ...d, cost_usd: undefined }))
-    .map(({ cost_usd: _, ...rest }) => rest)
+    .map(([name, { cost, ...rest }]) => ({ name, ...rest, cost: convertCost(cost) }))
 
   // activities
   const catMap: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
