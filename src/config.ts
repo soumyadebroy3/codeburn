@@ -7,6 +7,7 @@ export type CodeburnConfig = {
     code: string
     symbol?: string
   }
+  modelAliases?: Record<string, string>
 }
 
 function getConfigDir(): string {
