@@ -51,7 +51,7 @@ codeburn report -p 30days       # rolling 30-day window
 codeburn report -p all          # every recorded session
 codeburn report --from 2026-04-01 --to 2026-04-10  # exact date range
 codeburn report --format json   # full dashboard data as JSON
-codeburn report --refresh 60    # auto-refresh every 60 seconds
+codeburn report --refresh 60    # auto-refresh every 60s (default: 30s)
 codeburn status                 # compact one-liner (today + month)
 codeburn status --format json
 codeburn export                 # CSV with today, 7 days, 30 days
@@ -60,7 +60,7 @@ codeburn optimize               # find waste, get copy-paste fixes
 codeburn optimize -p week       # scope the scan to last 7 days
 ```
 
-Arrow keys switch between Today / 7 Days / 30 Days / Month / All Time. Press `q` to quit, `1` `2` `3` `4` `5` as shortcuts. The dashboard also shows average cost per session and the five most expensive sessions across all projects.
+Arrow keys switch between Today / 7 Days / 30 Days / Month / All Time. Press `q` to quit, `1` `2` `3` `4` `5` as shortcuts, `c` to open model comparison. The dashboard auto-refreshes every 30 seconds by default (`--refresh 0` to disable). The dashboard also shows average cost per session and the five most expensive sessions across all projects.
 
 ### JSON output
 
@@ -176,7 +176,7 @@ The menu bar widget includes a currency picker with 17 common currencies. For an
 npx codeburn menubar
 ```
 
-One command: downloads the latest `.app`, installs into `~/Applications`, and launches it. Re-run with `--force` to reinstall. Native Swift + SwiftUI app lives in `mac/` (see `mac/README.md` for build details). Shows today's cost with a flame icon, opens a popover with agent tabs, period switcher (Today / 7 Days / 30 Days / Month / All), Trend / Forecast / Pulse / Stats / Plan insights, activity and model breakdowns, optimize findings, and CSV/JSON export. Refreshes live via FSEvents plus a 60-second poll.
+One command: downloads the latest `.app`, installs into `~/Applications`, and launches it. Re-run with `--force` to reinstall. Native Swift + SwiftUI app lives in `mac/` (see `mac/README.md` for build details). Shows today's cost with a flame icon, opens a popover with agent tabs, period switcher (Today / 7 Days / 30 Days / Month / All), Trend / Forecast / Pulse / Stats / Plan insights, activity and model breakdowns, optimize findings, and CSV/JSON export. Refreshes live via FSEvents plus a 15-second poll.
 
 ## What it tracks
 
@@ -250,6 +250,37 @@ Each finding shows the estimated token and dollar savings plus a ready-to-paste 
 
 You can also open it inline from the dashboard: press `o` when a finding count appears in the status bar, `b` to return.
 
+## Compare
+
+Side-by-side model comparison across any two models in your session data. Pick any pair and see how they stack up on real usage from your own sessions.
+
+```bash
+codeburn compare                        # interactive model picker (default: all time)
+codeburn compare -p week                # last 7 days
+codeburn compare -p today               # today only
+codeburn compare --provider claude      # Claude Code sessions only
+```
+
+Or press `c` in the dashboard to enter compare mode. Arrow keys switch periods, `b` to return.
+
+**Metrics compared**
+
+| Section | Metric | What it measures |
+|---------|--------|-----------------|
+| Performance | One-shot rate | Edits that succeed without retries |
+| Performance | Retry rate | Average retries per edit turn |
+| Performance | Self-correction | Turns where the model corrected its own mistake |
+| Efficiency | Cost / call | Average cost per API call |
+| Efficiency | Cost / edit | Average cost per edit turn |
+| Efficiency | Output tok / call | Average output tokens per call |
+| Efficiency | Cache hit rate | Proportion of input from cache |
+
+**Per-category one-shot rates.** Breaks down one-shot success by task category (Coding, Debugging, Feature Dev, etc.) so you can see where each model excels or struggles.
+
+**Working style.** Compares delegation rate (agent spawns), planning rate (TaskCreate, TaskUpdate, TodoWrite usage), average tools per turn, and fast mode usage.
+
+All metrics are computed from your local session data. No LLM calls, fully deterministic.
+
 ## How it reads data
 
 **Claude Code** stores session transcripts as JSONL at `~/.claude/projects/<sanitized-path>/<session-id>.jsonl`. Each assistant entry contains model name, token usage (input, output, cache read, cache write), tool_use blocks, and timestamps.
@@ -280,6 +311,7 @@ src/
   parser.ts       JSONL reader, dedup, date filter, provider orchestration
   models.ts       LiteLLM pricing, cost calculation
   classifier.ts   13-category task classifier
+  compare-stats.ts Model comparison engine (metrics, category breakdown, working style)
   types.ts        Type definitions
   format.ts       Text rendering (status bar)
   menubar-json.ts Payload builder consumed by the native macOS menubar app in mac/
