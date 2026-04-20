@@ -5,10 +5,11 @@
   "type": "module",
   "main": "./dist/cli.js",
   "bin": {
-    "codeburn": "dist/cli.js"
+    "codeburn": "bin/codeburn"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsup",

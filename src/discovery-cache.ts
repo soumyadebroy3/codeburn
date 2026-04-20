@@ -8,12 +8,21 @@ import type { SessionSource } from './providers/types.js'
 
 const DISCOVERY_CACHE_VERSION = 1
 
+const DISCOVERY_DIRECTORY_MARKER_PREFIX = '__dir__:'
+
+function traceDiscoveryCacheRead(op: string, filePath: string, note?: string): void {
+  if (process.env['CODEBURN_FILE_TRACE'] !== '1') return
+  const suffix = note ? ` ${note}` : ''
+  process.stderr.write(`codeburn-trace discovery ${op} ${filePath}${suffix}\n`)
+}
+
 export type DiscoverySnapshotEntry = {
   path: string
   mtimeMs: number
+  dirSignature?: string
 }
 
-type DiscoveryCacheEntry = {
+export type DiscoveryCacheEntry = {
   version: number
   provider: string
   scope: string
@@ -78,8 +87,44 @@ function snapshotsMatch(left: DiscoverySnapshotEntry[], right: DiscoverySnapshot
   if (left.length !== right.length) return false
   return left.every((entry, index) => {
     const other = right[index]
-    return !!other && entry.path === other.path && entry.mtimeMs === other.mtimeMs
+    return !!other
+      && entry.path === other.path
+      && entry.mtimeMs === other.mtimeMs
+      && entry.dirSignature === other.dirSignature
   })
+}
+
+function makeDirectoryMarker(path: string, dirSignature?: string): DiscoverySnapshotEntry {
+  return {
+    path: `${DISCOVERY_DIRECTORY_MARKER_PREFIX}${path}`,
+    mtimeMs: 0,
+    dirSignature,
+  }
+}
+
+export function isDiscoveryDirectoryMarker(path: string): boolean {
+  return path.startsWith(DISCOVERY_DIRECTORY_MARKER_PREFIX)
+}
+
+export function directoryPathFromMarker(markerPath: string): string | null {
+  return markerPath.startsWith(DISCOVERY_DIRECTORY_MARKER_PREFIX)
+    ? markerPath.slice(DISCOVERY_DIRECTORY_MARKER_PREFIX.length)
+    : null
+}
+
+async function loadDiscoveryCacheEntry(provider: string, scope: string): Promise<DiscoveryCacheEntry | null> {
+  const path = cachePath(provider, scope)
+  if (!existsSync(path)) return null
+  traceDiscoveryCacheRead('entry:read', path, `provider=${provider} scope=${scope}`)
+
+  try {
+    const raw = await readFile(path, 'utf-8')
+    const parsed: unknown = JSON.parse(raw)
+    if (!isDiscoveryCacheEntry(parsed) || parsed.provider !== provider || parsed.scope !== scope) return null
+    return parsed
+  } catch {
+    return null
+  }
 }
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {
@@ -129,6 +174,13 @@ export async function loadDiscoveryCache(
   }
 }
 
+export async function loadDiscoveryCacheEntryUnchecked(
+  provider: string,
+  scope: string,
+): Promise<DiscoveryCacheEntry | null> {
+  return loadDiscoveryCacheEntry(provider, scope)
+}
+
 export async function saveDiscoveryCache(
   provider: string,
   scope: string,
@@ -143,4 +195,8 @@ export async function saveDiscoveryCache(
     snapshot: normalizeSnapshot(snapshot),
     sources,
   } satisfies DiscoveryCacheEntry)
+}
+
+export function discoveryDirectoryMarker(prefixPath: string, dirSignature?: string): DiscoverySnapshotEntry {
+  return makeDirectoryMarker(prefixPath, dirSignature)
 }

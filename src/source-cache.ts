@@ -8,6 +8,14 @@ import type { SessionSummary } from './types.js'
 
 export const SOURCE_CACHE_VERSION = 1
 
+function traceCacheRead(op: string, filePath: string, note?: string): void {
+  if (process.env['CODEBURN_FILE_TRACE'] !== '1') return
+  const suffix = note ? ` ${note}` : ''
+  process.stderr.write(`codeburn-trace source-cache ${op} ${filePath}${suffix}\n`)
+}
+
+const APPEND_TAIL_WINDOW_BYTES = 16 * 1024
+
 export type SourceCacheStrategy = 'full-reparse' | 'append-jsonl'
 
 export type SourceFingerprint = {
@@ -35,11 +43,39 @@ export type SourceCacheEntry = {
 
 export type SourceCacheManifest = {
   version: number
-  entries: Record<string, { file: string; provider: string; logicalPath: string }>
+  entries: Record<string, SourceCacheManifestEntry>
+}
+
+export type SourceCacheManifestEntry = {
+  file: string
+  provider: string
+  logicalPath: string
+  lastSeenParserVersion?: string
+  cacheStrategy?: SourceCacheStrategy
+  fingerprintPath?: string
+  fingerprint?: SourceFingerprint
+  firstTimestamp?: string
+  lastTimestamp?: string
+  appendState?: AppendState
 }
 
 export type ReadSourceCacheEntryOptions = {
   allowStaleFingerprint?: boolean
+}
+
+export type SourceRange = {
+  firstTimestamp?: string
+  lastTimestamp?: string
+}
+
+export type CachedSourcePlanHint = SourceCacheManifestEntry & SourceRange
+
+export function sourceCacheKey(provider: string, logicalPath: string): string {
+  return `${provider}:${logicalPath}`
+}
+
+export function getManifestEntry(manifest: SourceCacheManifest, provider: string, logicalPath: string): SourceCacheManifestEntry | null {
+  return manifest.entries[sourceCacheKey(provider, logicalPath)] ?? null
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -50,12 +86,32 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-function isManifestEntry(value: unknown): value is { file: string; provider: string; logicalPath: string } {
+function isManifestEntry(value: unknown): value is SourceCacheManifest['entries'][string] {
+  const isAppendStateValue = (entry: unknown): entry is AppendState =>
+    isPlainObject(entry)
+    && typeof entry.endOffset === 'number'
+    && Number.isFinite(entry.endOffset)
+    && typeof entry.tailHash === 'string'
+    && (entry.lastEntryType === undefined || typeof entry.lastEntryType === 'string')
+
+  const isFingerprint = (entry: unknown): entry is SourceFingerprint => isPlainObject(entry)
+    && Number.isFinite(entry.mtimeMs)
+    && typeof entry.mtimeMs === 'number'
+    && Number.isFinite(entry.sizeBytes)
+    && typeof entry.sizeBytes === 'number'
+
   return isPlainObject(value)
     && typeof value.file === 'string'
     && /^[a-f0-9]{40}\.json$/.test(value.file)
     && typeof value.provider === 'string'
     && typeof value.logicalPath === 'string'
+    && (value.lastSeenParserVersion === undefined || typeof value.lastSeenParserVersion === 'string')
+    && (value.cacheStrategy === undefined || value.cacheStrategy === 'full-reparse' || value.cacheStrategy === 'append-jsonl')
+    && (value.fingerprintPath === undefined || typeof value.fingerprintPath === 'string')
+    && (value.fingerprint === undefined || isFingerprint(value.fingerprint))
+    && (value.firstTimestamp === undefined || typeof value.firstTimestamp === 'string')
+    && (value.lastTimestamp === undefined || typeof value.lastTimestamp === 'string')
+    && (value.appendState === undefined || isAppendStateValue(value.appendState))
 }
 
 function isSessionSummary(value: unknown): value is SessionSummary {
@@ -150,6 +206,60 @@ function isAppendState(value: unknown): value is AppendState {
     && (value.lastEntryType === undefined || typeof value.lastEntryType === 'string')
 }
 
+function rangeFromSessions(sessions: SessionSummary[]): SourceRange {
+  if (sessions.length === 0) return {}
+
+  let firstTs = sessions[0]?.firstTimestamp
+  let lastTs = sessions[sessions.length - 1]?.lastTimestamp
+  for (const session of sessions) {
+    if (!firstTs || session.firstTimestamp < firstTs) firstTs = session.firstTimestamp
+    if (!lastTs || session.lastTimestamp > lastTs) lastTs = session.lastTimestamp
+  }
+
+  return {
+    firstTimestamp: firstTs,
+    lastTimestamp: lastTs,
+  }
+}
+
+async function readTailStateHash(filePath: string, endOffset: number): Promise<string | null> {
+  if (endOffset <= 0) return null
+  const start = Math.max(0, endOffset - APPEND_TAIL_WINDOW_BYTES)
+  const length = Math.max(0, endOffset - start)
+  if (length <= 0) return null
+
+  const handle = await open(filePath, 'r')
+  const buffer = Buffer.alloc(length)
+
+  try {
+    await handle.read(buffer, 0, length, start)
+  } finally {
+    await handle.close()
+  }
+
+  const chunk = buffer.toString('utf-8').replace(/[\r\n]+$/, '')
+  if (chunk.length === 0) return null
+
+  const lastNewline = chunk.lastIndexOf('\n')
+  const lastLine = lastNewline >= 0 ? chunk.slice(lastNewline + 1) : chunk
+  return lastLine.trim() ? createHash('sha1').update(lastLine).digest('hex') : null
+}
+
+function isDateRangeOverlap(
+  firstTimestamp: string | undefined,
+  lastTimestamp: string | undefined,
+  rangeStart: number,
+  rangeEnd: number,
+): boolean | null {
+  if (!firstTimestamp || !lastTimestamp) return null
+
+  const firstMs = new Date(firstTimestamp).getTime()
+  const lastMs = new Date(lastTimestamp).getTime()
+  if (Number.isNaN(firstMs) || Number.isNaN(lastMs)) return null
+
+  return lastMs >= rangeStart && firstMs <= rangeEnd
+}
+
 function isSourceCacheEntry(value: unknown): value is SourceCacheEntry {
   return isPlainObject(value)
     && typeof value.version === 'number'
@@ -181,12 +291,8 @@ function entryDir(): string {
   return join(cacheRoot(), 'entries')
 }
 
-function sourceKey(provider: string, logicalPath: string): string {
-  return `${provider}:${logicalPath}`
-}
-
 function entryFilename(provider: string, logicalPath: string): string {
-  return `${createHash('sha1').update(sourceKey(provider, logicalPath)).digest('hex')}.json`
+  return `${createHash('sha1').update(sourceCacheKey(provider, logicalPath)).digest('hex')}.json`
 }
 
 export function emptySourceCacheManifest(): SourceCacheManifest {
@@ -199,6 +305,7 @@ export async function computeFileFingerprint(filePath: string): Promise<SourceFi
 }
 
 export async function loadSourceCacheManifest(): Promise<SourceCacheManifest> {
+  traceCacheRead('manifest:read', manifestPath())
   if (!existsSync(manifestPath())) return emptySourceCacheManifest()
 
   try {
@@ -254,7 +361,7 @@ export async function readSourceCacheEntry(
   logicalPath: string,
   options: ReadSourceCacheEntryOptions = {},
 ): Promise<SourceCacheEntry | null> {
-  const meta = manifest.entries[sourceKey(provider, logicalPath)]
+  const meta = manifest.entries[sourceCacheKey(provider, logicalPath)]
   if (!meta) return null
   if (meta.provider !== provider || meta.logicalPath !== logicalPath) return null
 
@@ -263,6 +370,7 @@ export async function readSourceCacheEntry(
 
   try {
     const raw = await readFile(join(entryDir(), meta.file), 'utf-8')
+    traceCacheRead('entry:read', join(entryDir(), meta.file), `provider=${provider} logicalPath=${logicalPath}`)
     const entry: unknown = JSON.parse(raw)
     if (!isSourceCacheEntry(entry) || entry.version !== SOURCE_CACHE_VERSION) return null
     if (entry.provider !== provider || entry.logicalPath !== logicalPath) return null
@@ -273,7 +381,17 @@ export async function readSourceCacheEntry(
         currentFingerprint.mtimeMs !== entry.fingerprint.mtimeMs
         || currentFingerprint.sizeBytes !== entry.fingerprint.sizeBytes
       ) {
-        return null
+        const sizeMatches = currentFingerprint.sizeBytes === entry.fingerprint.sizeBytes
+        if (!(
+          entry.cacheStrategy === 'append-jsonl'
+          && entry.appendState
+          && sizeMatches
+        )) {
+          return null
+        }
+
+        const liveTailHash = await readTailStateHash(entry.fingerprintPath, entry.appendState.endOffset)
+        if (liveTailHash !== entry.appendState.tailHash) return null
       }
     }
 
@@ -287,9 +405,24 @@ export async function writeSourceCacheEntry(manifest: SourceCacheManifest, entry
   await mkdir(entryDir(), { recursive: true })
   const file = entryFilename(entry.provider, entry.logicalPath)
   await atomicWriteJson(join(entryDir(), file), entry)
-  manifest.entries[sourceKey(entry.provider, entry.logicalPath)] = {
+  const range = rangeFromSessions(entry.sessions)
+  manifest.entries[sourceCacheKey(entry.provider, entry.logicalPath)] = {
     file,
     provider: entry.provider,
     logicalPath: entry.logicalPath,
+    lastSeenParserVersion: entry.parserVersion,
+    cacheStrategy: entry.cacheStrategy,
+    fingerprintPath: entry.fingerprintPath,
+    fingerprint: entry.fingerprint,
+    ...range,
+    appendState: entry.appendState,
   }
+}
+
+export function isManifestDateRangeOverlap(
+  manifestEntry: SourceCacheManifestEntry | null,
+  dateRange?: { start: Date; end: Date },
+): boolean | null {
+  if (!manifestEntry || !dateRange) return null
+  return isDateRangeOverlap(manifestEntry.firstTimestamp, manifestEntry.lastTimestamp, dateRange.start.getTime(), dateRange.end.getTime())
 }

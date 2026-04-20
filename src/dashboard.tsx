@@ -4,7 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { render, Box, Text, useInput, useApp, useWindowSize } from 'ink'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { formatCost, formatTokens } from './format.js'
-import { parseAllSessions, filterProjectsByName } from './parser.js'
+import { parseAllSessions, filterProjectsByDateRange, filterProjectsByName } from './parser.js'
 import { loadPricing } from './models.js'
 import { getAllProviders } from './providers/index.js'
 import { scanAndDetect, type WasteFinding, type WasteAction, type OptimizeResult } from './optimize.js'
@@ -19,6 +19,15 @@ import { join } from 'path'
 
 type Period = 'today' | 'week' | '30days' | 'month' | 'all'
 type View = 'dashboard' | 'optimize' | 'compare'
+
+type CachedWindow = {
+  period: Period
+  range: {
+    start: Date
+    end: Date
+  }
+  projects: ProjectSummary[]
+}
 
 const PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
 const PERIOD_LABELS: Record<Period, string> = {
@@ -106,6 +115,10 @@ function getDateRange(period: Period): { start: Date; end: Date } {
     case 'month': return { start: new Date(now.getFullYear(), now.getMonth(), 1), end }
     case 'all': return { start: new Date(0), end }
   }
+}
+
+function rangeCovers(outer: { start: Date; end: Date }, inner: { start: Date; end: Date }): boolean {
+  return outer.start <= inner.start && outer.end >= inner.end
 }
 
 type Layout = { dashWidth: number; wide: boolean; halfWidth: number; barWidth: number }
@@ -630,8 +643,155 @@ function InteractiveDashboard({ initialProjects, initialPeriod, initialProvider,
   ).size
   const compareAvailable = modelCount >= 2
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const reloadGenerationRef = useRef(0)
+  const cacheByProviderRef = useRef(new Map<string, CachedWindow[]>())
+  const reloadSeqRef = useRef(0)
+  const preloadingRef = useRef(new Map<string, Promise<ProjectSummary[]>>())
   const findingCount = optimizeResult?.findings.length ?? 0
+
+  const providerCacheKey = useCallback((provider: string) => `${provider}:${noCache ? 'nocache' : 'cache'}`, [noCache])
+  const getRangeWidth = useCallback((range: { start: Date; end: Date }) => range.end.getTime() - range.start.getTime(), [])
+  const makeCacheToken = useCallback((provider: string, period: Period) => `${providerCacheKey(provider)}:${period}`, [providerCacheKey])
+
+  const storeCachedWindow = useCallback((provider: string, period: Period, range: { start: Date; end: Date }, projects: ProjectSummary[]) => {
+    if (noCache) return
+    const key = providerCacheKey(provider)
+    const windows = cacheByProviderRef.current.get(key) ?? []
+    const normalizedRange = { start: new Date(range.start), end: new Date(range.end) }
+    const existing = windows.findIndex(
+      existing => existing.period === period && existing.range.start.getTime() === normalizedRange.start.getTime() && existing.range.end.getTime() === normalizedRange.end.getTime(),
+    )
+    if (existing >= 0) windows.splice(existing, 1)
+    windows.push({ period, range: normalizedRange, projects })
+    windows.sort((a, b) => a.range.start.getTime() - b.range.start.getTime())
+    cacheByProviderRef.current.set(key, windows)
+  }, [noCache, providerCacheKey])
+
+  const findCachedWindow = useCallback((provider: string, range: { start: Date; end: Date }) => {
+    const candidates = cacheByProviderRef.current.get(providerCacheKey(provider)) ?? []
+    let best: CachedWindow | undefined
+    for (const candidate of candidates) {
+      if (!rangeCovers(candidate.range, range)) continue
+      if (!best) { best = candidate; continue }
+      if (getRangeWidth(candidate.range) < getRangeWidth(best.range)) {
+        best = candidate
+      } else if (candidate.period !== best.period && getRangeWidth(candidate.range) === getRangeWidth(best.range) && candidate.range.start > best.range.start) {
+        best = candidate
+      }
+    }
+    return best
+  }, [getRangeWidth, providerCacheKey])
+
+  const preloadWindow = useCallback(async (periodToLoad: Period, provider: string) => {
+    if (noCache) return
+    const preloadKey = makeCacheToken(provider, periodToLoad)
+    const range = getDateRange(periodToLoad)
+    const cached = findCachedWindow(provider, range)
+    if (cached) return
+    const inFlight = preloadingRef.current.get(preloadKey)
+    if (inFlight) return
+
+    const promise = (async () => {
+      const projects = await parseAllSessions(range, provider, { noCache, progress: null })
+      if (!noCache) {
+        storeCachedWindow(provider, periodToLoad, range, projects)
+      }
+      return projects
+    })()
+
+    preloadingRef.current.set(preloadKey, promise)
+    try {
+      await promise
+    } finally {
+      preloadingRef.current.delete(preloadKey)
+    }
+  }, [findCachedWindow, makeCacheToken, noCache, storeCachedWindow])
+
+  const reloadData = useCallback(async (p: Period, prov: string, options?: { silent?: boolean }) => {
+    const range = getDateRange(p)
+    const request = ++reloadSeqRef.current
+    const token = makeCacheToken(prov, p)
+    const cachedWindow = findCachedWindow(prov, range)
+    if (!options?.silent) {
+      setOptimizeResult(null)
+    }
+
+    if (cachedWindow) {
+      const projectsFromCache = filterProjectsByName(
+        filterProjectsByDateRange(cachedWindow.projects, range),
+        projectFilter,
+        excludeFilter,
+      )
+      if (!options?.silent && request === reloadSeqRef.current) {
+        setProjects(projectsFromCache)
+      }
+      if (!options?.silent) {
+        const usage = await getPlanUsageOrNull()
+        if (request !== reloadSeqRef.current) return
+        setPlanUsage(usage ?? undefined)
+      }
+      return
+    }
+
+    const inFlight = preloadingRef.current.get(token)
+    if (inFlight) {
+      if (!options?.silent) setLoading(true)
+      try {
+        const projects = await inFlight
+        if (!noCache) {
+          storeCachedWindow(prov, p, range, projects)
+        }
+        if (request !== reloadSeqRef.current) return
+        const filtered = filterProjectsByName(projects, projectFilter, excludeFilter)
+        if (!options?.silent) {
+          setProjects(filtered)
+        }
+      } finally {
+        if (!options?.silent && request === reloadSeqRef.current) setLoading(false)
+      }
+      if (!options?.silent) {
+        const usage = await getPlanUsageOrNull()
+        if (request !== reloadSeqRef.current) return
+        setPlanUsage(usage ?? undefined)
+      }
+      return
+    }
+
+    if (!options?.silent) setLoading(true)
+    try {
+      const projects = await parseAllSessions(range, prov, { noCache, progress: null })
+      if (!noCache) {
+        storeCachedWindow(prov, p, range, projects)
+      }
+      if (request !== reloadSeqRef.current) return
+      const filtered = filterProjectsByName(projects, projectFilter, excludeFilter)
+      if (!options?.silent) {
+        setProjects(filtered)
+      }
+    } finally {
+      if (!options?.silent && request === reloadSeqRef.current) setLoading(false)
+    }
+    if (!options?.silent) {
+      const usage = await getPlanUsageOrNull()
+      if (request !== reloadSeqRef.current) return
+      setPlanUsage(usage ?? undefined)
+    }
+  }, [excludeFilter, findCachedWindow, getPlanUsageOrNull, noCache, projectFilter, storeCachedWindow])
+
+  useEffect(() => {
+    if (noCache) return
+    const initialRange = getDateRange(initialPeriod)
+    const initialKey = providerCacheKey(initialProvider)
+    const existing = cacheByProviderRef.current.get(initialKey) ?? []
+    const alreadyCached = existing.some(entry => rangeCovers(entry.range, initialRange))
+    if (!alreadyCached) {
+      storeCachedWindow(initialProvider, initialPeriod, initialRange, initialProjects)
+    }
+  }, [initialPeriod, initialProvider, initialProjects, noCache, providerCacheKey, storeCachedWindow])
+
+  useEffect(() => {
+    if (noCache || period === '30days') return
+    void preloadWindow('30days', activeProvider)
+  }, [noCache, period, activeProvider, preloadWindow])
 
   useEffect(() => {
     let cancelled = false
@@ -672,32 +832,6 @@ function InteractiveDashboard({ initialProjects, initialPeriod, initialProvider,
     scan()
     return () => { cancelled = true }
   }, [projects, period, optimizeAvailable])
-
-  const reloadData = useCallback(async (p: Period, prov: string) => {
-    const generation = ++reloadGenerationRef.current
-    setLoading(true)
-    setOptimizeResult(null)
-    try {
-      const range = getDateRange(p)
-      const data = filterProjectsByName(
-        await parseAllSessions(range, prov, { noCache: noCache ?? false, progress: null }),
-        projectFilter,
-        excludeFilter,
-      )
-      if (reloadGenerationRef.current !== generation) return
-
-      setProjects(data)
-      const usage = await getPlanUsageOrNull()
-      if (reloadGenerationRef.current !== generation) return
-      setPlanUsage(usage ?? undefined)
-    } catch (error) {
-      console.error(error)
-    } finally {
-      if (reloadGenerationRef.current === generation) {
-        setLoading(false)
-      }
-    }
-  }, [excludeFilter, noCache, projectFilter])
 
   useEffect(() => {
     if (!refreshSeconds || refreshSeconds <= 0) return

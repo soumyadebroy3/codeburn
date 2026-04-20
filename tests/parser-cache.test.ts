@@ -75,14 +75,18 @@ afterEach(async () => {
 })
 
 describe('parseAllSessions source cache', () => {
-  it('reuses unchanged cached sources, refreshes changed sources, and honors noCache', async () => {
+  it('uses one global progress lifecycle across provider refreshes', async () => {
     const fakeSource = {
       path: sourcePath,
       fingerprintPath: sourcePath,
       project: 'fake-project',
       provider: 'fake',
       cacheStrategy: 'full-reparse',
-      progressLabel: 'fake.jsonl',
+    } as SessionSource
+    const claudeSource = {
+      path: join(claudeRoot, 'projects', 'demo-project'),
+      project: 'demo-project',
+      provider: 'claude',
     } as SessionSource
 
     const fakeProvider: Provider = {
@@ -103,7 +107,10 @@ describe('parseAllSessions source cache', () => {
     }
 
     vi.doMock('../src/providers/index.js', () => ({
-      discoverAllSessions: async () => [fakeSource],
+      discoverAllSessions: async (providerFilter?: string) => {
+        if (providerFilter === 'fake') return [fakeSource]
+        return [claudeSource, fakeSource]
+      },
       getProvider: async () => fakeProvider,
     }))
 
@@ -115,12 +122,15 @@ describe('parseAllSessions source cache', () => {
       finish: vi.fn(),
     }
 
-    const first = await parseAllSessions(undefined, 'fake', { progress })
-    expect(first[0]?.totalApiCalls).toBe(1)
+    const first = await parseAllSessions(undefined, undefined, { progress })
+    expect(first).toEqual(expect.any(Array))
     expect(parseCalls).toBe(1)
-    expect(progress.start).toHaveBeenCalledWith('Updating cache', 1)
-    expect(progress.advance).toHaveBeenCalledWith('fake.jsonl')
-    expect(progress.finish).toHaveBeenCalled()
+    expect(progress.start).toHaveBeenCalledTimes(1)
+    expect(progress.start).toHaveBeenCalledWith(2)
+    expect(progress.advance).toHaveBeenCalledWith('claude')
+    expect(progress.advance).toHaveBeenCalledWith('fake')
+    expect(progress.finish).toHaveBeenCalledTimes(1)
+    expect(progress.finish).toHaveBeenCalledWith('fake')
 
     const second = await parseAllSessions(undefined, 'fake')
     expect(second[0]?.totalApiCalls).toBe(1)
@@ -134,6 +144,118 @@ describe('parseAllSessions source cache', () => {
     const rebuilt = await parseAllSessions(undefined, 'fake', { noCache: true })
     expect(rebuilt[0]?.totalApiCalls).toBe(2)
     expect(parseCalls).toBe(3)
+  })
+
+  it('reuses a broader cached window for a narrower date range', async () => {
+    const providerName = 'fake-range-reuse'
+    const fakeSource = {
+      path: sourcePath,
+      fingerprintPath: sourcePath,
+      project: 'fake-project',
+      provider: providerName,
+      cacheStrategy: 'full-reparse',
+    } as SessionSource
+
+    const fakeProvider: Provider = {
+      name: providerName,
+      displayName: 'Fake',
+      modelDisplayName: model => model,
+      toolDisplayName: tool => tool,
+      discoverSessions: async () => [fakeSource],
+      createSessionParser() {
+        return {
+          async *parse() {
+            parseCalls += 1
+            yield { ...makeCall(0), timestamp: '2026-04-20T10:00:00.000Z', deduplicationKey: `${providerName}:day1` }
+            yield { ...makeCall(1), timestamp: '2026-04-21T10:00:00.000Z', deduplicationKey: `${providerName}:day2` }
+          },
+        }
+      },
+    }
+
+    vi.doMock('../src/providers/index.js', () => ({
+      discoverAllSessions: async () => [fakeSource],
+      getProvider: async () => fakeProvider,
+    }))
+
+    vi.resetModules()
+    const { parseAllSessions: parseWithCache } = await import('../src/parser.js')
+
+    const wide = {
+      start: new Date('2026-04-19T00:00:00.000Z'),
+      end: new Date('2026-04-21T23:59:59.999Z'),
+    }
+    const narrow = {
+      start: new Date('2026-04-20T00:00:00.000Z'),
+      end: new Date('2026-04-20T23:59:59.999Z'),
+    }
+
+    const wideProjects = await parseWithCache(wide, providerName)
+    expect(wideProjects[0]?.totalApiCalls).toBe(2)
+    expect(parseCalls).toBe(1)
+
+    const narrowProjects = await parseWithCache(narrow, providerName)
+    expect(narrowProjects[0]?.totalApiCalls).toBe(1)
+    expect(parseCalls).toBe(1)
+  })
+
+  it('does not deduplicate claude turns across different session files', async () => {
+    const sharedMsgId = 'msg_shared_duplicate_123'
+    const secondSessionPath = join(claudeRoot, 'projects', 'demo-project', 'session-2.jsonl')
+    await Promise.all([
+      writeFile(claudeSessionPath, [
+        JSON.stringify({
+          type: 'user',
+          timestamp: '2026-04-20T09:00:00.000Z',
+          sessionId: 'sess-1',
+          message: { role: 'user', content: 'first' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-04-20T09:00:01.000Z',
+          message: {
+            id: sharedMsgId,
+            model: 'claude-sonnet-4-6',
+            role: 'assistant',
+            type: 'message',
+            content: [],
+            usage: { input_tokens: 10, output_tokens: 20 },
+          },
+        }),
+      ].join('\n') + '\n'),
+      writeFile(secondSessionPath, [
+        JSON.stringify({
+          type: 'user',
+          timestamp: '2026-04-20T09:05:00.000Z',
+          sessionId: 'sess-2',
+          message: { role: 'user', content: 'second' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-04-20T09:05:01.000Z',
+          message: {
+            id: sharedMsgId,
+            model: 'claude-sonnet-4-6',
+            role: 'assistant',
+            type: 'message',
+            content: [],
+            usage: { input_tokens: 11, output_tokens: 21 },
+          },
+        }),
+      ].join('\n') + '\n'),
+    ])
+
+    vi.doUnmock('../src/providers/index.js')
+    vi.resetModules()
+    const { parseAllSessions } = await import('../src/parser.js')
+
+    const first = await parseAllSessions(undefined, 'claude')
+    const project = first.find(project => project.project === 'demo-project')
+    expect(project?.totalApiCalls).toBe(2)
+
+    const second = await parseAllSessions(undefined, 'claude')
+    const cachedProject = second.find(project => project.project === 'demo-project')
+    expect(cachedProject?.totalApiCalls).toBe(2)
   })
 
   it('filters cached full sessions down to the requested date range', async () => {
@@ -306,5 +428,48 @@ describe('parseAllSessions source cache', () => {
     expect(session?.turns).toHaveLength(1)
     expect(session?.turns[0]?.userMessage).toBe('first')
     expect(session?.turns[0]?.assistantCalls).toHaveLength(2)
+  })
+
+  it('caches Claude session files that contain no turns', async () => {
+    await writeFile(claudeSessionPath, [
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-04-20T09:00:00.000Z',
+        sessionId: 'sess-empty',
+        message: { role: 'user', content: 'no assistant response' },
+      }),
+    ].join('\n') + '\n', 'utf-8')
+
+    const readSessionFileCalls: string[] = []
+    vi.doMock('../src/fs-utils.js', async () => {
+      const actual = await vi.importActual<typeof import('../src/fs-utils.js')>('../src/fs-utils.js')
+      return {
+        ...actual,
+        readSessionFile: vi.fn(async (filePath: string) => {
+          readSessionFileCalls.push(filePath)
+          return actual.readSessionFile(filePath)
+        }),
+      }
+    })
+
+    vi.resetModules()
+    const { parseAllSessions } = await import('../src/parser.js')
+
+    const first = await parseAllSessions(undefined, 'claude')
+    const cacheRoot = join(root, 'cache', 'source-cache-v1')
+    const manifest = JSON.parse(await readFile(join(cacheRoot, 'manifest.json'), 'utf-8')) as {
+      entries: Record<string, { file: string }>
+    }
+    const entryKey = `claude:${claudeSessionPath}`
+    expect(manifest.entries[entryKey]).toBeDefined()
+    const cacheEntry = JSON.parse(await readFile(join(cacheRoot, 'entries', manifest.entries[entryKey]!.file), 'utf-8')) as { sessions: unknown[] }
+
+    expect(first.find(project => project.project === 'demo-project')?.totalApiCalls).toBeUndefined()
+    expect(readSessionFileCalls.filter(path => path === claudeSessionPath)).toHaveLength(1)
+    expect(cacheEntry.sessions).toHaveLength(0)
+
+    const second = await parseAllSessions(undefined, 'claude')
+    expect(second.find(project => project.project === 'demo-project')?.totalApiCalls).toBeUndefined()
+    expect(readSessionFileCalls.filter(path => path === claudeSessionPath)).toHaveLength(1)
   })
 })
