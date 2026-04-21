@@ -13,6 +13,10 @@
 
 <p align="center"><sub>Fork of <a href="https://github.com/getagentseal/codeburn">getagentseal/codeburn</a> with hardened git invocation, SonarQube quality-gated builds, plan-aware leverage UX, multi-provider plan auto-detect, and an HTML report. See <a href="#fork-notes">Fork notes</a>.</sub></p>
 
+<<<<<<< HEAD
+=======
+By task type, tool, model, MCP server, and project. Supports **Claude Code**, **Codex** (OpenAI), **Cursor**, **cursor-agent**, **OpenCode**, **Pi**, **Codebuff**, and **GitHub Copilot** with a provider plugin system. Tracks one-shot success rate per activity type so you can see where the AI nails it first try vs. burns tokens on edit/test/fix retries. Interactive TUI dashboard with gradient charts, responsive panels, and keyboard navigation. Native macOS menubar app in `mac/`. CSV/JSON export.
+>>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
 CodeBurn tracks token usage, cost, and performance across **19 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
@@ -119,7 +123,23 @@ Provider logos are trademarks of their respective owners. The icon set was sourc
 
 CodeBurn auto-detects which AI coding tools you use. If multiple providers have session data on disk, press `p` in the dashboard to toggle between them.
 
+<<<<<<< HEAD
 The `--provider` flag filters any command to a single provider: `codeburn report --provider claude`, `codeburn today --provider codex`, `codeburn export --provider cursor`. Works on all commands: `report`, `today`, `month`, `status`, `export`, `optimize`, `compare`, `yield`.
+=======
+```bash
+codeburn report                      # all providers combined (default)
+codeburn report --provider claude    # Claude Code only
+codeburn report --provider codex     # Codex only
+codeburn report --provider cursor    # Cursor only
+codeburn report --provider cursor-agent  # cursor-agent CLI only
+codeburn report --provider opencode  # OpenCode only
+codeburn report --provider pi        # Pi only
+codeburn report --provider codebuff  # Codebuff only
+codeburn report --provider copilot   # GitHub Copilot only
+codeburn today --provider codex      # Codex today
+codeburn export --provider claude    # export Claude data only
+```
+>>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
 ### Provider Notes
 
@@ -141,7 +161,21 @@ Adding a new provider is a single file. See `src/providers/codex.ts` for an exam
 
 ## Features
 
+<<<<<<< HEAD
 ### Cost Tracking
+=======
+| Provider | Data location | Status |
+|----------|--------------|--------|
+| Claude Code | `~/.claude/projects/` | Supported |
+| Claude Desktop | `~/Library/Application Support/Claude/local-agent-mode-sessions/` | Supported |
+| Codex (OpenAI) | `~/.codex/sessions/` | Supported |
+| Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` | Supported |
+| OpenCode | `~/.local/share/opencode/` (SQLite) | Supported |
+| Pi | `~/.pi/agent/sessions/` | Supported |
+| Codebuff | `~/.config/manicode/` | Supported (credits-based cost) |
+| GitHub Copilot | `~/.copilot/session-state/` | Supported (output tokens only) |
+| Amp | -- | Planned (provider plugin system) |
+>>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
 Prices every API call using input, output, cache read, cache write, and web search token counts. Fast mode multiplier for Claude. Pricing fetched from [LiteLLM](https://github.com/BerriAI/litellm) and cached locally for 24 hours. Hardcoded fallbacks for all Claude and GPT models to prevent mispricing.
 
@@ -382,7 +416,13 @@ These are starting points, not verdicts. A 60% cache hit on a single experimenta
 
 **Pi / OMP** stores sessions as JSONL at `~/.pi/agent/sessions/<sanitized-cwd>/*.jsonl` (Pi) and `~/.omp/agent/sessions/<sanitized-cwd>/*.jsonl` (OMP). Each assistant message carries token usage (input, output, cacheRead, cacheWrite) plus inline `toolCall` content blocks. CodeBurn extracts token counts, normalizes tool names to the standard set (`bash` to `Bash`, `dispatch_agent` to `Agent`), and pulls bash commands from `toolCall.arguments.command` for the shell breakdown.
 
+<<<<<<< HEAD
 **Gemini CLI** stores sessions as single JSON files at `~/.gemini/tmp/<project>/chats/session-*.json`. Each session embeds real token counts (input, output, cached, thoughts) per message. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
+=======
+**Codebuff** (formerly Manicode) stores per-chat history as JSON at `~/.config/manicode/projects/<project>/chats/<chatId>/chat-messages.json`. Codebuff bills in credits rather than tokens, so CodeBurn records each completed assistant message (via `msg.credits`) and approximates cost at the public pay-as-you-go rate ($0.01 / credit). When Codebuff routes a call through an upstream provider and the stashed RunState records token-level usage (`message.metadata.runState.sessionState.mainAgentState.messageHistory[*].providerOptions`), the real tokens and LiteLLM-calculated cost take precedence. Codebuff-native tool names (`read_files`, `str_replace`, `run_terminal_command`, `spawn_agents`, etc.) normalize to the canonical set (`Read`, `Edit`, `Bash`, `Agent`). The `manicode-dev` and `manicode-staging` channels are walked automatically when present. Honors `CODEBUFF_DATA_DIR` for a custom root.
+
+CodeBurn reads these files, deduplicates messages (by API message ID for Claude, by cumulative token cross-check for Codex, by conversation/timestamp for Cursor, by session+message ID for OpenCode, by responseId for Pi, by chat folder + message ID for Codebuff), filters by date range per entry, and classifies each turn.
+>>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
 **Mistral Vibe** stores session folders at `~/.vibe/logs/session/`. Each folder contains `meta.json` with cumulative prompt/completion token totals, model pricing, timestamps, and working directory, plus `messages.jsonl` with user prompts and assistant tool calls. CodeBurn emits one record per Vibe session because the source data is cumulative, not per assistant turn.
 
@@ -400,11 +440,15 @@ CodeBurn deduplicates messages (by API message ID for Claude, by cumulative toke
 |----------|-------------|
 | `CLAUDE_CONFIG_DIR` | Override Claude Code data directory (default: `~/.claude`) |
 | `CODEX_HOME` | Override Codex data directory (default: `~/.codex`) |
+<<<<<<< HEAD
 | `FACTORY_DIR` | Override Droid data directory (default: `~/.factory`) |
 | `KIMI_SHARE_DIR` | Override Kimi Code CLI share directory (default: `~/.kimi`) |
 | `KIMI_MODEL_NAME` | Override Kimi model name when Kimi sessions do not record the model |
 | `QWEN_DATA_DIR` | Override Qwen data directory (default: `~/.qwen/projects`) |
 | `VIBE_HOME` | Override Mistral Vibe home directory (default: `~/.vibe`) |
+=======
+| `CODEBUFF_DATA_DIR` | Override Codebuff data directory (default: `~/.config/manicode`) |
+>>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
 ## Project Structure
 
