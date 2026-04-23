@@ -225,7 +225,7 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
     }()
     let now = Date()
     let today = calendar.startOfDay(for: now)
-    let costByDate = Dictionary(uniqueKeysWithValues: history.map { ($0.date, $0.cost) })
+    let costByDate = Dictionary(history.map { ($0.date, $0.cost) }, uniquingKeysWith: +)
 
     let lastWeekStart = calendar.date(byAdding: .day, value: -6, to: today)
     let priorWeekStart = calendar.date(byAdding: .day, value: -13, to: today)

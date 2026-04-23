@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         observeStore()
         startRefreshLoop()
         setupWakeObservers()
+        setupDistributedNotificationListener()
+        installLaunchAgentIfNeeded()
         Task { await updateChecker.checkIfNeeded() }
     }
 
@@ -66,6 +68,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.forceRefresh() }
+        }
+    }
+
+    private func setupDistributedNotificationListener() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.codeburn.refresh"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.forceRefresh() }
+        }
+    }
+
+    private func installLaunchAgentIfNeeded() {
+        let fm = FileManager.default
+        let agentName = "com.codeburn.refresh.plist"
+        let home = fm.homeDirectoryForCurrentUser.path
+        let destPath = "\(home)/Library/LaunchAgents/\(agentName)"
+
+        let plist = """
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.codeburn.refresh</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/osascript</string>
+        <string>-l</string>
+        <string>JavaScript</string>
+        <string>-e</string>
+        <string>ObjC.import("Foundation"); $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserInfoDeliverImmediately("com.codeburn.refresh", $(), $(), true)</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>15</integer>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+"""
+
+        do {
+            let existing = try? String(contentsOfFile: destPath, encoding: .utf8)
+            if existing == plist { return }
+
+            try fm.createDirectory(atPath: "\(home)/Library/LaunchAgents", withIntermediateDirectories: true)
+            try plist.write(toFile: destPath, atomically: true, encoding: .utf8)
+
+            let unload = Process()
+            unload.launchPath = "/bin/launchctl"
+            unload.arguments = ["unload", destPath]
+            try? unload.run()
+            unload.waitUntilExit()
+
+            let load = Process()
+            load.launchPath = "/bin/launchctl"
+            load.arguments = ["load", destPath]
+            try load.run()
+            load.waitUntilExit()
+        } catch {
+            NSLog("CodeBurn: LaunchAgent setup failed: \(error)")
         }
     }
 
