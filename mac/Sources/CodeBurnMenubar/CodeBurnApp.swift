@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import Observation
 
-private let refreshIntervalSeconds: UInt64 = 15
+private let refreshIntervalSeconds: UInt64 = 30
 private let nanosPerSecond: UInt64 = 1_000_000_000
 private let refreshIntervalNanos: UInt64 = refreshIntervalSeconds * nanosPerSecond
 private let statusItemWidth: CGFloat = NSStatusItem.variableLength
@@ -28,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover!
     private let store = AppStore()
     let updateChecker = UpdateChecker()
-    private var dispatchTimer: DispatchSourceTimer?
     /// Held for the lifetime of the app to opt out of App Nap and Automatic Termination.
     private var backgroundActivity: NSObjectProtocol?
 
@@ -104,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         <string>ObjC.import("Foundation"); $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserInfoDeliverImmediately("com.codeburn.refresh", $(), $(), true)</string>
     </array>
     <key>StartInterval</key>
-    <integer>15</integer>
+    <integer>30</integer>
     <key>RunAtLoad</key>
     <true/>
 </dict>
@@ -158,10 +157,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private var lastRefreshTime: Date = .distantPast
+
     private func forceRefresh() {
+        let now = Date()
+        guard now.timeIntervalSince(lastRefreshTime) > 5 else { return }
+        lastRefreshTime = now
+
         Task {
-            await store.refreshQuietly(period: .today)
-            refreshStatusButton()
             await store.refresh(includeOptimize: true)
             refreshStatusButton()
         }
@@ -189,33 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        dispatchTimer?.cancel()
-    }
-
     private func startRefreshLoop() {
-        // Initial fetch on launch
         Task {
-            await store.refreshQuietly(period: .today)
-            refreshStatusButton()
             await store.refresh(includeOptimize: true)
             refreshStatusButton()
         }
-
-        // Use DispatchSourceTimer for more reliable background execution
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + .seconds(Int(refreshIntervalSeconds)), repeating: .seconds(Int(refreshIntervalSeconds)), leeway: .seconds(1))
-        timer.setEventHandler { [weak self] in
-            guard let self = self else { return }
-            Task { @MainActor in
-                await self.store.refreshQuietly(period: .today)
-                self.refreshStatusButton()
-                await self.store.refresh(includeOptimize: true)
-                self.refreshStatusButton()
-            }
-        }
-        timer.resume()
-        dispatchTimer = timer
     }
 
     private func observeStore() {
@@ -285,11 +266,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             attributes: [.font: font, .foregroundColor: color, .baselineOffset: -1.0]
         ))
         button.attributedTitle = composed
-        // Force immediate redraw. NSStatusItem sometimes defers the status bar paint for an
-        // accessory app that is not foreground, so the label visually freezes until the user
-        // opens the popover (which triggers NSApp.activate + a forced redraw cycle).
-        button.needsDisplay = true
-        button.display()
     }
 
     // MARK: - Popover
