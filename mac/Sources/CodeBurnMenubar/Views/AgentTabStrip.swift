@@ -25,9 +25,9 @@ struct AgentTabStrip: View {
         }
     }
 
-    /// Drive tab VISIBILITY from the all-provider today payload so tabs don't disappear
-    /// when switching periods or to a provider with no data. Cost values come from
-    /// store.payload (the selected period) via cost(for:).
+    /// Drive tab visibility and per-tab cost labels from the *all-provider* payload (today),
+    /// not the currently selected provider's payload. Without this, switching to Codex (which
+    /// has no data) would hide every other tab including Claude.
     private var allProvidersToday: MenubarPayload {
         store.todayPayload ?? store.payload
     }
@@ -46,16 +46,13 @@ struct AgentTabStrip: View {
         }
     }
 
-    /// Cost for the selected period, not pinned to today. The hero shows payload.current.cost,
-    /// so these tabs must match. Tab VISIBILITY is still driven by todayPayload (via
-    /// visibleFilters) so that tabs don't disappear when switching periods.
     private func cost(for filter: ProviderFilter) -> Double? {
         switch filter {
         case .all:
-            return store.payload.current.cost
+            return allProvidersToday.current.cost
         default:
             let key = filter.rawValue.lowercased()
-            return store.payload.current.providers[key]
+            return allProvidersToday.current.providers[key]
         }
     }
 }
