@@ -236,6 +236,7 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
     case openclaw = "OpenClaw"
     case opencode = "OpenCode"
     case pi = "Pi"
+    case qwen = "Qwen"
     case omp = "OMP"
     case rooCode = "Roo Code"
 
@@ -264,6 +265,7 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
         case .openclaw: "openclaw"
         case .opencode: "opencode"
         case .pi: "pi"
+        case .qwen: "qwen"
         case .omp: "omp"
         case .rooCode: "roo-code"
         }

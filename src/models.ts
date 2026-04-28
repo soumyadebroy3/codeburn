@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
+import snapshotData from './data/litellm-snapshot.json'
 
 export type ModelCosts = {
   inputCostPerToken: number
@@ -19,44 +20,34 @@ type LiteLLMEntry = {
   provider_specific_entry?: { fast?: number }
 }
 
+type SnapshotEntry = [number, number, number | null, number | null]
+
 const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WEB_SEARCH_COST = 0.01
 
-const FALLBACK_PRICING: Record<string, ModelCosts> = {
-  'claude-opus-4-7': { inputCostPerToken: 5e-6, outputCostPerToken: 25e-6, cacheWriteCostPerToken: 6.25e-6, cacheReadCostPerToken: 0.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 6 },
-  'claude-opus-4-6': { inputCostPerToken: 5e-6, outputCostPerToken: 25e-6, cacheWriteCostPerToken: 6.25e-6, cacheReadCostPerToken: 0.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 6 },
-  'claude-opus-4-5': { inputCostPerToken: 5e-6, outputCostPerToken: 25e-6, cacheWriteCostPerToken: 6.25e-6, cacheReadCostPerToken: 0.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-opus-4-1': { inputCostPerToken: 15e-6, outputCostPerToken: 75e-6, cacheWriteCostPerToken: 18.75e-6, cacheReadCostPerToken: 1.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-opus-4': { inputCostPerToken: 15e-6, outputCostPerToken: 75e-6, cacheWriteCostPerToken: 18.75e-6, cacheReadCostPerToken: 1.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-sonnet-4-6': { inputCostPerToken: 3e-6, outputCostPerToken: 15e-6, cacheWriteCostPerToken: 3.75e-6, cacheReadCostPerToken: 0.3e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-sonnet-4-5': { inputCostPerToken: 3e-6, outputCostPerToken: 15e-6, cacheWriteCostPerToken: 3.75e-6, cacheReadCostPerToken: 0.3e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-sonnet-4': { inputCostPerToken: 3e-6, outputCostPerToken: 15e-6, cacheWriteCostPerToken: 3.75e-6, cacheReadCostPerToken: 0.3e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-3-7-sonnet': { inputCostPerToken: 3e-6, outputCostPerToken: 15e-6, cacheWriteCostPerToken: 3.75e-6, cacheReadCostPerToken: 0.3e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-3-5-sonnet': { inputCostPerToken: 3e-6, outputCostPerToken: 15e-6, cacheWriteCostPerToken: 3.75e-6, cacheReadCostPerToken: 0.3e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-haiku-4-5': { inputCostPerToken: 1e-6, outputCostPerToken: 5e-6, cacheWriteCostPerToken: 1.25e-6, cacheReadCostPerToken: 0.1e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'claude-3-5-haiku': { inputCostPerToken: 0.8e-6, outputCostPerToken: 4e-6, cacheWriteCostPerToken: 1e-6, cacheReadCostPerToken: 0.08e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-4o': { inputCostPerToken: 2.5e-6, outputCostPerToken: 10e-6, cacheWriteCostPerToken: 2.5e-6, cacheReadCostPerToken: 1.25e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-4o-mini': { inputCostPerToken: 0.15e-6, outputCostPerToken: 0.6e-6, cacheWriteCostPerToken: 0.15e-6, cacheReadCostPerToken: 0.075e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gemini-3.1-pro-preview': { inputCostPerToken: 2e-6, outputCostPerToken: 12e-6, cacheWriteCostPerToken: 2e-6, cacheReadCostPerToken: 0.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gemini-3-flash-preview': { inputCostPerToken: 0.5e-6, outputCostPerToken: 3e-6, cacheWriteCostPerToken: 0.5e-6, cacheReadCostPerToken: 0.125e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gemini-2.5-pro': { inputCostPerToken: 1.25e-6, outputCostPerToken: 10e-6, cacheWriteCostPerToken: 1.25e-6, cacheReadCostPerToken: 0.3125e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gemini-2.5-flash': { inputCostPerToken: 0.3e-6, outputCostPerToken: 2.5e-6, cacheWriteCostPerToken: 0.3e-6, cacheReadCostPerToken: 0.075e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-5.3-codex': { inputCostPerToken: 2.5e-6, outputCostPerToken: 10e-6, cacheWriteCostPerToken: 2.5e-6, cacheReadCostPerToken: 1.25e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-5.4': { inputCostPerToken: 2.5e-6, outputCostPerToken: 10e-6, cacheWriteCostPerToken: 2.5e-6, cacheReadCostPerToken: 1.25e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-5.4-mini': { inputCostPerToken: 0.4e-6, outputCostPerToken: 1.6e-6, cacheWriteCostPerToken: 0.4e-6, cacheReadCostPerToken: 0.2e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-5': { inputCostPerToken: 2.5e-6, outputCostPerToken: 10e-6, cacheWriteCostPerToken: 2.5e-6, cacheReadCostPerToken: 1.25e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-5-mini': { inputCostPerToken: 0.4e-6, outputCostPerToken: 1.6e-6, cacheWriteCostPerToken: 0.4e-6, cacheReadCostPerToken: 0.2e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-4.1': { inputCostPerToken: 2e-6, outputCostPerToken: 8e-6, cacheWriteCostPerToken: 2e-6, cacheReadCostPerToken: 0.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-4.1-mini': { inputCostPerToken: 0.4e-6, outputCostPerToken: 1.6e-6, cacheWriteCostPerToken: 0.4e-6, cacheReadCostPerToken: 0.1e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'gpt-4.1-nano': { inputCostPerToken: 0.1e-6, outputCostPerToken: 0.4e-6, cacheWriteCostPerToken: 0.1e-6, cacheReadCostPerToken: 0.025e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'o3': { inputCostPerToken: 10e-6, outputCostPerToken: 40e-6, cacheWriteCostPerToken: 10e-6, cacheReadCostPerToken: 2.5e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'o4-mini': { inputCostPerToken: 1.1e-6, outputCostPerToken: 4.4e-6, cacheWriteCostPerToken: 1.1e-6, cacheReadCostPerToken: 0.275e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'MiniMax-M2.7-highspeed': { inputCostPerToken: 0.6e-6, outputCostPerToken: 2.4e-6, cacheWriteCostPerToken: 0.375e-6, cacheReadCostPerToken: 0.06e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
-  'MiniMax-M2.7': { inputCostPerToken: 0.3e-6, outputCostPerToken: 1.2e-6, cacheWriteCostPerToken: 0.375e-6, cacheReadCostPerToken: 0.06e-6, webSearchCostPerRequest: WEB_SEARCH_COST, fastMultiplier: 1 },
+const FAST_MULTIPLIERS: Record<string, number> = {
+  'claude-opus-4-7': 6,
+  'claude-opus-4-6': 6,
 }
 
-let pricingCache: Map<string, ModelCosts> | null = null
+function loadSnapshot(): Map<string, ModelCosts> {
+  const map = new Map<string, ModelCosts>()
+  for (const [name, raw] of Object.entries(snapshotData as unknown as Record<string, SnapshotEntry>)) {
+    const [input, output, cacheWrite, cacheRead] = raw
+    map.set(name, {
+      inputCostPerToken: input,
+      outputCostPerToken: output,
+      cacheWriteCostPerToken: cacheWrite ?? input * 1.25,
+      cacheReadCostPerToken: cacheRead ?? input * 0.1,
+      webSearchCostPerRequest: WEB_SEARCH_COST,
+      fastMultiplier: FAST_MULTIPLIERS[name] ?? 1,
+    })
+  }
+  return map
+}
+
+let pricingCache: Map<string, ModelCosts> = loadSnapshot()
 
 function getCacheDir(): string {
   return join(homedir(), '.cache', 'codeburn')
@@ -125,7 +116,7 @@ export async function loadPricing(): Promise<void> {
   try {
     pricingCache = await fetchAndCachePricing()
   } catch {
-    pricingCache = new Map(Object.entries(FALLBACK_PRICING))
+    // snapshot already loaded at init; nothing more to do
   }
 }
 
@@ -145,6 +136,7 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'kiro-auto':                     'claude-sonnet-4-5',
   'cline-auto':                    'claude-sonnet-4-5',
   'openclaw-auto':                 'claude-sonnet-4-5',
+  'qwen-auto':                     'claude-sonnet-4-5',
   // Cursor emits dot-version tier-last names
   'claude-4.6-sonnet':              'claude-sonnet-4-6',
   'claude-4.5-sonnet-thinking':     'claude-sonnet-4-5',
@@ -177,20 +169,15 @@ function getCanonicalName(model: string): string {
 }
 
 export function getModelCosts(model: string): ModelCosts | null {
+  // Try with provider prefix preserved (azure/gpt-5.4, openrouter/anthropic/claude-opus-4.6)
+  const withPrefix = model.replace(/@.*$/, '').replace(/-\d{8}$/, '')
+  if (pricingCache.has(withPrefix)) return pricingCache.get(withPrefix)!
+
   const canonical = resolveAlias(getCanonicalName(model))
+  if (pricingCache.has(canonical)) return pricingCache.get(canonical)!
 
-  if (pricingCache?.has(canonical)) return pricingCache.get(canonical)!
-
-  for (const [key, costs] of Object.entries(FALLBACK_PRICING)) {
-    if (canonical === key || canonical.startsWith(key + '-')) return costs
-  }
-
-  for (const [key, costs] of pricingCache ?? new Map()) {
-    if (canonical.startsWith(key)) return costs
-  }
-
-  for (const [key, costs] of Object.entries(FALLBACK_PRICING)) {
-    if (canonical.startsWith(key)) return costs
+  for (const [key, costs] of pricingCache) {
+    if (canonical.startsWith(key + '-') || canonical.startsWith(key)) return costs
   }
 
   return null
@@ -226,6 +213,7 @@ const autoModelNames: Record<string, string> = {
   'kiro-auto': 'Kiro (auto)',
   'cline-auto': 'Cline (auto)',
   'openclaw-auto': 'OpenClaw (auto)',
+  'qwen-auto': 'Qwen (auto)',
 }
 
 export function getShortModelName(model: string): string {
@@ -250,11 +238,21 @@ export function getShortModelName(model: string): string {
     'gpt-4.1-mini': 'GPT-4.1 Mini',
     'gpt-4.1': 'GPT-4.1',
     'codex-auto-review': 'Codex Auto Review',
+    'gpt-5.5-pro': 'GPT-5.5 Pro',
+    'gpt-5.5': 'GPT-5.5',
+    'gpt-5.4-pro': 'GPT-5.4 Pro',
+    'gpt-5.4-nano': 'GPT-5.4 Nano',
     'gpt-5.4-mini': 'GPT-5.4 Mini',
     'gpt-5.4': 'GPT-5.4',
     'gpt-5.3-codex': 'GPT-5.3 Codex',
+    'gpt-5.2-pro': 'GPT-5.2 Pro',
     'gpt-5.2-low': 'GPT-5.2 Low',
     'gpt-5.2': 'GPT-5.2',
+    'gpt-5.1-codex-mini': 'GPT-5.1 Codex Mini',
+    'gpt-5.1-codex': 'GPT-5.1 Codex',
+    'gpt-5.1': 'GPT-5.1',
+    'gpt-5-pro': 'GPT-5 Pro',
+    'gpt-5-nano': 'GPT-5 Nano',
     'gpt-5-mini': 'GPT-5 Mini',
     'gpt-5': 'GPT-5',
     'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',

@@ -6,6 +6,7 @@ import { kiloCode } from './kilo-code.js'
 import { kiro } from './kiro.js'
 import { openclaw } from './openclaw.js'
 import { pi, omp } from './pi.js'
+import { qwen } from './qwen.js'
 import { rooCode } from './roo-code.js'
 import type { Provider, SessionSource } from './types.js'
 
@@ -54,7 +55,7 @@ async function loadCursorAgent(): Promise<Provider | null> {
   }
 }
 
-const coreProviders: Provider[] = [claude, codex, copilot, gemini, kiloCode, kiro, openclaw, pi, omp, rooCode]
+const coreProviders: Provider[] = [claude, codex, copilot, gemini, kiloCode, kiro, openclaw, pi, omp, qwen, rooCode]
 
 export async function getAllProviders(): Promise<Provider[]> {
   const [cursor, opencode, cursorAgent] = await Promise.all([loadCursor(), loadOpenCode(), loadCursorAgent()])

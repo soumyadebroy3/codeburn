@@ -11,7 +11,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "bundle-litellm": "node scripts/bundle-litellm.mjs",
+    "build": "node scripts/bundle-litellm.mjs && tsup",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
     "prepublishOnly": "npm run build"
