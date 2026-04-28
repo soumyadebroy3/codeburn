@@ -143,6 +143,15 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'cursor-agent-auto':             'claude-sonnet-4-5',
   'copilot-auto':                  'claude-sonnet-4-5',
   'kiro-auto':                     'claude-sonnet-4-5',
+  // Cursor emits dot-version tier-last names
+  'claude-4.6-sonnet':              'claude-sonnet-4-6',
+  'claude-4.5-sonnet-thinking':     'claude-sonnet-4-5',
+  'claude-4-sonnet-thinking':       'claude-sonnet-4-5',
+  'claude-4-opus':                  'claude-opus-4-5',
+  'claude-4.5-opus-high-thinking':  'claude-opus-4-5',
+  'gpt-4.1':                        'gpt-4.1',
+  'gpt-5.2-low':                    'gpt-5',
+  'gpt-5.1-codex-high':             'gpt-5.3-codex',
 }
 
 let userAliases: Record<string, string> = {}
