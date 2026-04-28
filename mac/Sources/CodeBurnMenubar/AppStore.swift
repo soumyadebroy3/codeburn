@@ -65,13 +65,13 @@ final class AppStore {
     /// Switch to a period. Always fetches fresh data so the user never sees stale numbers.
     func switchTo(period: Period) async {
         selectedPeriod = period
-        await refresh(includeOptimize: true)
+        await refresh(includeOptimize: true, force: true)
     }
 
     /// Switch to a provider filter. Always fetches fresh data so the user never sees stale numbers.
     func switchTo(provider: ProviderFilter) async {
         selectedProvider = provider
-        await refresh(includeOptimize: true)
+        await refresh(includeOptimize: true, force: true)
     }
 
     private var inFlightKeys: Set<PayloadCacheKey> = []
@@ -79,11 +79,15 @@ final class AppStore {
     /// Refresh the currently selected (period, provider) combination. Guards against concurrent
     /// fetches for the same key so a slow initial request can't overwrite a newer one that
     /// finished first (which would show stale numbers the user has already moved past).
-    func refresh(includeOptimize: Bool) async {
+    /// When `force` is false (background timer), skips the CLI call if the cache is still fresh.
+    func refresh(includeOptimize: Bool, force: Bool = false) async {
         let key = currentKey
+        if !force, cache[key]?.isFresh == true { return }
         guard !inFlightKeys.contains(key) else { return }
         inFlightKeys.insert(key)
-        isLoading = true
+        if cache[key] == nil {
+            isLoading = true
+        }
         defer {
             inFlightKeys.remove(key)
             isLoading = false
