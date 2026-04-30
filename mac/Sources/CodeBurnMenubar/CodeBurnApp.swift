@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         lastRefreshTime = now
 
         Task {
-            await store.refresh(includeOptimize: true)
+            await store.refresh(includeOptimize: true, force: true)
             refreshStatusButton()
         }
     }
@@ -311,7 +311,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func handleButtonClick(_ sender: AnyObject?) {
-        guard let button = statusItem.button else { return }
+        guard let button = statusItem.button,
+              let event = NSApp.currentEvent else { return }
+
+        if event.type == .rightMouseUp {
+            showContextMenu(from: button)
+            return
+        }
+
         if popover.isShown {
             popover.performClose(sender)
         } else {
@@ -319,6 +326,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    private func showContextMenu(from button: NSStatusBarButton) {
+        let menu = NSMenu()
+        let updateItem = NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+        menu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "Quit CodeBurn", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+        statusItem.menu = menu
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    private func codeburnAlertIcon() -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 32, weight: .medium)
+        guard let symbol = NSImage(systemSymbolName: "flame.fill", accessibilityDescription: "CodeBurn")?
+            .withSymbolConfiguration(config) else { return nil }
+        let size = NSSize(width: 64, height: 64)
+        let img = NSImage(size: size, flipped: false) { rect in
+            let symbolSize = symbol.size
+            let x = (rect.width - symbolSize.width) / 2
+            let y = (rect.height - symbolSize.height) / 2
+            symbol.draw(in: NSRect(x: x, y: y, width: symbolSize.width, height: symbolSize.height))
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }
+
+    @objc private func checkForUpdates() {
+        Task {
+            await updateChecker.check()
+            let alert = NSAlert()
+            alert.icon = codeburnAlertIcon()
+            if updateChecker.updateAvailable, let latest = updateChecker.latestVersion {
+                alert.messageText = "Update Available"
+                alert.informativeText = "v\(latest) is available (you have v\(updateChecker.currentVersion)). Run:\n\ncodeburn menubar --force"
+            } else {
+                alert.messageText = "Up to Date"
+                alert.informativeText = "You're on the latest version (v\(updateChecker.currentVersion))."
+            }
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 
     // MARK: - NSPopoverDelegate

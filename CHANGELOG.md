@@ -26,8 +26,13 @@
 - **Instant cached data display.** Shows cached data immediately instead of blocking on CLI refresh.
 
 ### Fixed (macOS menubar)
+- **Menubar stops updating after first load.** Background refresh was silently skipped by the cache TTL guard. Data loaded once, then froze. Fixes #179.
 - **Menubar not dimming on inactive screens.**
 - **Performance improvements.** Reduced unnecessary redraws and CLI invocations.
+
+### Added (macOS menubar)
+- **Right-click context menu.** Right-click the status bar icon for "Check for Updates" and "Quit CodeBurn".
+- **Version label in footer.**
 
 ### Changed
 - README restructured with honeycomb provider hero image, 2x2 screenshot grid, and complete inline reference.
