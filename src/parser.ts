@@ -3,6 +3,7 @@ import { basename, join } from 'path'
 import { readSessionLines } from './fs-utils.js'
 import { calculateCost, getShortModelName } from './models.js'
 import { discoverAllSessions, getProvider } from './providers/index.js'
+import { flushCodexCache } from './codex-cache.js'
 import type { ParsedProviderCall } from './providers/types.js'
 import type {
   AssistantMessageContent,
@@ -402,36 +403,40 @@ async function parseProviderSources(
 
   const sessionMap = new Map<string, { project: string; turns: ClassifiedTurn[] }>()
 
-  for (const source of sources) {
-    if (dateRange) {
-      try {
-        const s = await stat(source.path)
-        if (s.mtimeMs < dateRange.start.getTime()) continue
-      } catch { /* fall through; treat unknown stat as "may contain data" */ }
-    }
-    const parser = provider.createSessionParser(
-      { path: source.path, project: source.project, provider: providerName },
-      seenKeys,
-    )
-
-    for await (const call of parser.parse()) {
+  try {
+    for (const source of sources) {
       if (dateRange) {
-        if (!call.timestamp) continue
-        const ts = new Date(call.timestamp)
-        if (ts < dateRange.start || ts > dateRange.end) continue
+        try {
+          const s = await stat(source.path)
+          if (s.mtimeMs < dateRange.start.getTime()) continue
+        } catch { /* fall through; treat unknown stat as "may contain data" */ }
       }
+      const parser = provider.createSessionParser(
+        { path: source.path, project: source.project, provider: providerName },
+        seenKeys,
+      )
 
-      const turn = providerCallToTurn(call)
-      const classified = classifyTurn(turn)
-      const key = `${providerName}:${call.sessionId}:${source.project}`
+      for await (const call of parser.parse()) {
+        if (dateRange) {
+          if (!call.timestamp) continue
+          const ts = new Date(call.timestamp)
+          if (ts < dateRange.start || ts > dateRange.end) continue
+        }
 
-      const existing = sessionMap.get(key)
-      if (existing) {
-        existing.turns.push(classified)
-      } else {
-        sessionMap.set(key, { project: source.project, turns: [classified] })
+        const turn = providerCallToTurn(call)
+        const classified = classifyTurn(turn)
+        const key = `${providerName}:${call.sessionId}:${source.project}`
+
+        const existing = sessionMap.get(key)
+        if (existing) {
+          existing.turns.push(classified)
+        } else {
+          sessionMap.set(key, { project: source.project, turns: [classified] })
+        }
       }
     }
+  } finally {
+    if (providerName === 'codex') await flushCodexCache()
   }
 
   const projectMap = new Map<string, SessionSummary[]>()

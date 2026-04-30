@@ -1,9 +1,10 @@
-import { readdir, stat } from 'fs/promises'
+import { readdir, stat, open } from 'fs/promises'
 import { basename, join } from 'path'
 import { homedir } from 'os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
+import { readCachedCodexResults, writeCachedCodexResults, getCachedCodexProject, fingerprintFile } from '../codex-cache.js'
 import type { Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
 
 const modelDisplayNames: Record<string, string> = {
@@ -69,14 +70,21 @@ function sanitizeProject(cwd: string): string {
 }
 
 async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
-  const content = await readSessionFile(filePath)
-  if (content === null) return null
-  const line = content.split('\n')[0]
-  if (!line?.trim()) return null
+  let fh
   try {
+    fh = await open(filePath, 'r')
+    const buf = Buffer.alloc(16384)
+    const { bytesRead } = await fh.read(buf, 0, 16384, 0)
+    if (bytesRead === 0) return null
+    const text = buf.toString('utf-8', 0, bytesRead)
+    const nl = text.indexOf('\n')
+    const line = nl >= 0 ? text.slice(0, nl) : text
+    if (!line.trim()) return null
     return JSON.parse(line) as CodexEntry
   } catch {
     return null
+  } finally {
+    await fh?.close()
   }
 }
 
@@ -121,6 +129,12 @@ async function discoverSessionsInDir(codexDir: string): Promise<SessionSource[]>
           const s = await stat(filePath).catch(() => null)
           if (!s?.isFile()) continue
 
+          const cachedProject = await getCachedCodexProject(filePath)
+          if (cachedProject) {
+            sources.push({ path: filePath, project: cachedProject, provider: 'codex' })
+            continue
+          }
+
           const { valid, meta } = await isValidCodexSession(filePath)
           if (!valid || !meta) continue
 
@@ -145,6 +159,19 @@ function resolveModel(info: CodexEntry['payload'], sessionModel?: string): strin
 function createParser(source: SessionSource, seenKeys: Set<string>): SessionParser {
   return {
     async *parse(): AsyncGenerator<ParsedProviderCall> {
+      const cached = await readCachedCodexResults(source.path)
+      if (cached) {
+        for (const call of cached) {
+          if (seenKeys.has(call.deduplicationKey)) continue
+          seenKeys.add(call.deduplicationKey)
+          yield call
+        }
+        return
+      }
+
+      const fp = await fingerprintFile(source.path)
+      if (!fp) return
+
       const content = await readSessionFile(source.path)
       if (content === null) return
       const lines = content.split('\n').filter(l => l.trim())
@@ -157,6 +184,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       let prevReasoning = 0
       let pendingTools: string[] = []
       let pendingUserMessage = ''
+      const results: ParsedProviderCall[] = []
 
       for (const line of lines) {
         let entry: CodexEntry
@@ -258,7 +286,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
             0,
           )
 
-          yield {
+          results.push({
             provider: 'codex',
             model,
             inputTokens: uncachedInputTokens,
@@ -276,11 +304,17 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
             deduplicationKey: dedupKey,
             userMessage: pendingUserMessage,
             sessionId,
-          }
+          })
 
           pendingTools = []
           pendingUserMessage = ''
         }
+      }
+
+      await writeCachedCodexResults(source.path, source.project, results, fp)
+
+      for (const call of results) {
+        yield call
       }
     },
   }
