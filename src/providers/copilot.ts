@@ -318,6 +318,7 @@ function getVSCodeWorkspaceStorageDirs(): string[] {
   return [
     join(homedir(), '.config', 'Code', 'User', 'workspaceStorage'),
     join(homedir(), '.config', 'Code - Insiders', 'User', 'workspaceStorage'),
+    join(homedir(), '.vscode-server', 'data', 'User', 'workspaceStorage'),
   ]
 }
 
