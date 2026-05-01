@@ -176,6 +176,45 @@ describe('codex provider - session discovery', () => {
     expect(sessions[0]!.project).toBe('Users-test-nonl')
   })
 
+  it('handles a session_meta line that spans multiple stream chunks', async () => {
+    // createReadStream defaults to a 64 KiB highWaterMark, so a >64 KiB first
+    // line forces readline to assemble the line across chunk boundaries.
+    const bigPayload = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-05-02T00:00:00Z',
+      payload: {
+        cwd: '/Users/test/multichunk',
+        originator: 'codex-tui',
+        session_id: 'sess-multichunk',
+        model: 'gpt-5.5',
+        base_instructions: { text: 'y'.repeat(120_000) },
+      },
+    })
+    await writeSession(tmpDir, '2026-05-02', 'rollout-multichunk.jsonl', [
+      bigPayload,
+      tokenCount({ last: { input: 100, output: 50 }, total: { total: 150 } }),
+    ])
+    const provider = createCodexProvider(tmpDir)
+    const sessions = await provider.discoverSessions()
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]!.project).toBe('Users-test-multichunk')
+  })
+
+  it('rejects truncated/torn first-line writes without throwing', async () => {
+    // Simulate a partial write where Codex started the session_meta object
+    // but hasn't flushed the rest yet (no closing brace, no newline).
+    const [year, month, day] = '2026-05-02'.split('-')
+    const sessionDir = join(tmpDir, 'sessions', year!, month!, day!)
+    await mkdir(sessionDir, { recursive: true })
+    await writeFile(
+      join(sessionDir, 'rollout-torn.jsonl'),
+      '{"type":"session_meta","timestamp":"2026-05-02T00:00:00Z","payload":{"cwd":"/x","originator":"codex-tui","session_id":"s","model":"gpt',
+    )
+    const provider = createCodexProvider(tmpDir)
+    const sessions = await provider.discoverSessions()
+    expect(sessions).toHaveLength(0)
+  })
+
   it('returns no sessions for an empty rollout file', async () => {
     const [year, month, day] = '2026-05-02'.split('-')
     const sessionDir = join(tmpDir, 'sessions', year!, month!, day!)

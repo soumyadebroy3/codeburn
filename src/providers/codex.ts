@@ -89,8 +89,10 @@ async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
   })
   const rl = createInterface({ input: stream, crlfDelay: Infinity })
   let firstLine: string | undefined
-  let streamError: unknown
-  stream.once('error', (err) => { streamError = err })
+  // readline's async iterator re-throws underlying stream errors (ENOENT,
+  // EACCES, etc.) on Node 16+, which the catch below handles. Don't track a
+  // separate streamError flag: it can race with the read-ahead and reject a
+  // valid first line if a *later* chunk errors after we've already broken.
   try {
     for await (const line of rl) {
       firstLine = line
@@ -102,7 +104,7 @@ async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
     rl.close()
     stream.destroy()
   }
-  if (streamError || !firstLine || !firstLine.trim()) return null
+  if (!firstLine || !firstLine.trim()) return null
   try {
     return JSON.parse(firstLine) as CodexEntry
   } catch {
