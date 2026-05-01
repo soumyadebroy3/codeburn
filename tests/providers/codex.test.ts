@@ -147,6 +147,43 @@ describe('codex provider - session discovery', () => {
     const sessions = await provider.discoverSessions()
     expect(sessions).toHaveLength(1)
     expect(sessions[0]!.path).toContain('rollout-big.jsonl')
+    // Confirm the large meta line was actually parsed (cwd extracted),
+    // not just that some path was registered.
+    expect(sessions[0]!.project).toBe('Users-test-big')
+  })
+
+  it('handles a session_meta line without trailing newline', async () => {
+    const [year, month, day] = '2026-05-02'.split('-')
+    const sessionDir = join(tmpDir, 'sessions', year!, month!, day!)
+    await mkdir(sessionDir, { recursive: true })
+    // Write a single session_meta line, deliberately without a trailing \n.
+    await writeFile(
+      join(sessionDir, 'rollout-no-nl.jsonl'),
+      JSON.stringify({
+        type: 'session_meta',
+        timestamp: '2026-05-02T00:00:00Z',
+        payload: {
+          cwd: '/Users/test/nonl',
+          originator: 'codex-tui',
+          session_id: 'sess-nonl',
+          model: 'gpt-5.5',
+        },
+      }),
+    )
+    const provider = createCodexProvider(tmpDir)
+    const sessions = await provider.discoverSessions()
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]!.project).toBe('Users-test-nonl')
+  })
+
+  it('returns no sessions for an empty rollout file', async () => {
+    const [year, month, day] = '2026-05-02'.split('-')
+    const sessionDir = join(tmpDir, 'sessions', year!, month!, day!)
+    await mkdir(sessionDir, { recursive: true })
+    await writeFile(join(sessionDir, 'rollout-empty.jsonl'), '')
+    const provider = createCodexProvider(tmpDir)
+    const sessions = await provider.discoverSessions()
+    expect(sessions).toHaveLength(0)
   })
 
   it('skips files without codex session_meta', async () => {

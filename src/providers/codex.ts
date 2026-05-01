@@ -71,14 +71,26 @@ function sanitizeProject(cwd: string): string {
   return cwd.replace(/^\//, '').replace(/\//g, '-')
 }
 
+// Cap how many bytes we'll read while looking for the first newline. Real
+// Codex session_meta lines are ~22-27 KB; this leaves plenty of headroom while
+// keeping memory bounded if a corrupt file has no newline at all.
+const FIRST_LINE_READ_CAP = 1024 * 1024
+
 async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
   // Codex CLI 0.128+ writes a session_meta line that can exceed 20 KB because
   // it embeds the full base_instructions / system prompt. A fixed-size buffer
   // would miss the trailing newline and reject the session as invalid.
-  // Stream the file via readline to read the first line regardless of length.
-  const stream = createReadStream(filePath, { encoding: 'utf-8' })
+  // Stream the file via readline so we can read the first line regardless of
+  // length, with `end` capping the read to keep memory bounded.
+  const stream = createReadStream(filePath, {
+    encoding: 'utf-8',
+    start: 0,
+    end: FIRST_LINE_READ_CAP - 1,
+  })
   const rl = createInterface({ input: stream, crlfDelay: Infinity })
   let firstLine: string | undefined
+  let streamError: unknown
+  stream.once('error', (err) => { streamError = err })
   try {
     for await (const line of rl) {
       firstLine = line
@@ -90,7 +102,7 @@ async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
     rl.close()
     stream.destroy()
   }
-  if (!firstLine || !firstLine.trim()) return null
+  if (streamError || !firstLine || !firstLine.trim()) return null
   try {
     return JSON.parse(firstLine) as CodexEntry
   } catch {
