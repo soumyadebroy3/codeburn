@@ -71,7 +71,7 @@ function loadDriver(): boolean {
       `(underlying error: ${message})`
     return false
   } finally {
-    restore()
+    process.nextTick(restore)
   }
 }
 

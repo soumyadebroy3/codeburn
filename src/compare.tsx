@@ -7,6 +7,7 @@ import { formatCost } from './format.js'
 import { parseAllSessions } from './parser.js'
 import { getAllProviders } from './providers/index.js'
 import type { ProjectSummary, DateRange } from './types.js'
+import { patchStdoutForWindows } from './ink-win.js'
 
 const ORANGE = '#FF8C42'
 const GREEN = '#5BF5A0'
@@ -448,6 +449,7 @@ export async function renderCompare(range: DateRange, provider: string): Promise
     return
   }
 
+  patchStdoutForWindows()
   const projects = await parseAllSessions(range, provider)
   const { waitUntilExit } = render(
     <CompareView projects={projects} onBack={() => process.exit(0)} />

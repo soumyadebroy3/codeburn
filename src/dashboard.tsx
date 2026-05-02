@@ -14,6 +14,7 @@ import { CompareView } from './compare.js'
 import { getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { planDisplayName } from './plans.js'
 import { join } from 'path'
+import { patchStdoutForWindows } from './ink-win.js'
 
 type Period = 'today' | 'week' | '30days' | 'month' | 'all'
 type View = 'dashboard' | 'optimize' | 'compare'
@@ -805,6 +806,7 @@ export async function renderDashboard(period: Period = 'week', provider: string 
   const filteredProjects = filterProjectsByName(await parseAllSessions(range, provider), projectFilter, excludeFilter)
   const planUsage = await getPlanUsageOrNull()
   const isTTY = process.stdin.isTTY && process.stdout.isTTY
+  patchStdoutForWindows()
   if (isTTY) {
     const { waitUntilExit } = render(
       <InteractiveDashboard initialProjects={filteredProjects} initialPeriod={period} initialProvider={provider} initialPlanUsage={planUsage ?? undefined} refreshSeconds={refreshSeconds} projectFilter={projectFilter} excludeFilter={excludeFilter} />
