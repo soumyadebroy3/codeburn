@@ -299,7 +299,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
 
           const model = resolveModel(entry.payload, sessionModel)
           const timestamp = entry.timestamp ?? ''
-          const dedupKey = `codex:${source.path}:${timestamp}:${cumulativeTotal}`
+          const dedupKey = `codex:${sessionId}:${timestamp}:${cumulativeTotal}`
 
           if (seenKeys.has(dedupKey)) continue
           seenKeys.add(dedupKey)

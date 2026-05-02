@@ -26,6 +26,21 @@ async function loadAntigravity(): Promise<Provider | null> {
   }
 }
 
+let gooseProvider: Provider | null = null
+let gooseLoadAttempted = false
+
+async function loadGoose(): Promise<Provider | null> {
+  if (gooseLoadAttempted) return gooseProvider
+  gooseLoadAttempted = true
+  try {
+    const { goose } = await import('./goose.js')
+    gooseProvider = goose
+    return goose
+  } catch {
+    return null
+  }
+}
+
 let cursorProvider: Provider | null = null
 let cursorLoadAttempted = false
 
@@ -74,9 +89,10 @@ async function loadCursorAgent(): Promise<Provider | null> {
 const coreProviders: Provider[] = [claude, codex, copilot, droid, gemini, kiloCode, kiro, openclaw, pi, omp, qwen, rooCode]
 
 export async function getAllProviders(): Promise<Provider[]> {
-  const [ag, cursor, opencode, cursorAgent] = await Promise.all([loadAntigravity(), loadCursor(), loadOpenCode(), loadCursorAgent()])
+  const [ag, gs, cursor, opencode, cursorAgent] = await Promise.all([loadAntigravity(), loadGoose(), loadCursor(), loadOpenCode(), loadCursorAgent()])
   const all = [...coreProviders]
   if (ag) all.push(ag)
+  if (gs) all.push(gs)
   if (cursor) all.push(cursor)
   if (opencode) all.push(opencode)
   if (cursorAgent) all.push(cursorAgent)
@@ -102,6 +118,10 @@ export async function getProvider(name: string): Promise<Provider | undefined> {
   if (name === 'antigravity') {
     const ag = await loadAntigravity()
     return ag ?? undefined
+  }
+  if (name === 'goose') {
+    const gs = await loadGoose()
+    return gs ?? undefined
   }
   if (name === 'cursor') {
     const cursor = await loadCursor()
