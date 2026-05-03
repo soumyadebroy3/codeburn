@@ -8,6 +8,13 @@ import { createInterface } from 'readline'
 export const MAX_SESSION_FILE_BYTES = 128 * 1024 * 1024
 export const STREAM_THRESHOLD_BYTES = 8 * 1024 * 1024
 
+// Line-by-line streaming has bounded memory (one line at a time) and is not
+// constrained by V8's string limit, so it can safely handle multi-GB session
+// files. The cap here is purely a sanity check against pathological inputs;
+// real Codex sessions for heavy users have been observed at 250+ MB and will
+// continue to grow as context windows expand.
+export const MAX_STREAM_SESSION_FILE_BYTES = 2 * 1024 * 1024 * 1024
+
 function verbose(): boolean {
   return process.env.CODEBURN_VERBOSE === '1'
 }
@@ -78,8 +85,10 @@ export async function* readSessionLines(filePath: string): AsyncGenerator<string
     return
   }
 
-  if (size > MAX_SESSION_FILE_BYTES) {
-    warn(`skipped oversize file ${filePath} (${size} bytes > cap ${MAX_SESSION_FILE_BYTES})`)
+  if (size > MAX_STREAM_SESSION_FILE_BYTES) {
+    warn(
+      `skipped oversize file ${filePath} (${size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`,
+    )
     return
   }
 
