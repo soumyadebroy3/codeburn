@@ -99,14 +99,10 @@ final class AppStore {
 
     private var inFlightKeys: Set<PayloadCacheKey> = []
 
-    /// Refresh the currently selected (period, provider) combination. Guards against concurrent
-    /// fetches for the same key so a slow initial request can't overwrite a newer one that
-    /// finished first (which would show stale numbers the user has already moved past).
-    /// When `force` is false (background timer), skips the CLI call if the cache is still fresh.
     func refresh(includeOptimize: Bool, force: Bool = false) async {
         let key = currentKey
         if !force, cache[key]?.isFresh == true { return }
-        guard !inFlightKeys.contains(key) else { return }
+        if !force, inFlightKeys.contains(key) { return }
         inFlightKeys.insert(key)
         let showedLoading = cache[key] == nil
         if showedLoading {

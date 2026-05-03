@@ -41,7 +41,7 @@ struct MenuBarContent: View {
                     }
                 }
 
-                if store.isLoading {
+                if store.isLoading || (providerHasCostInAllPayload && !store.hasCachedData) {
                     BurnLoadingOverlay(periodLabel: store.selectedPeriod.rawValue)
                         .transition(.opacity)
                 }
@@ -57,11 +57,22 @@ struct MenuBarContent: View {
         }
     }
 
-    /// True when a specific provider tab is selected and that provider has no spend in the
-    /// currently selected period. The .all tab is exempt -- it always shows aggregated data.
     private var isFilteredEmpty: Bool {
         guard store.selectedProvider != .all else { return false }
-        return store.payload.current.cost <= 0 && store.payload.current.calls == 0
+        if store.payload.current.cost > 0 || store.payload.current.calls > 0 { return false }
+        if providerHasCostInAllPayload { return false }
+        return true
+    }
+
+    private var providerHasCostInAllPayload: Bool {
+        guard let allPayload = store.periodAllPayload else { return false }
+        let providers = Dictionary(
+            allPayload.current.providers.map { ($0.key.lowercased(), $0.value) },
+            uniquingKeysWith: +
+        )
+        return store.selectedProvider.providerKeys.contains { key in
+            (providers[key] ?? 0) > 0
+        }
     }
 
     /// Show the tab row whenever the CLI detected at least one AI coding tool installed
