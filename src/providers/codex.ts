@@ -4,7 +4,7 @@ import { createInterface } from 'readline'
 import { basename, join } from 'path'
 import { homedir } from 'os'
 
-import { readSessionFile } from '../fs-utils.js'
+import { readSessionLines } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
 import { readCachedCodexResults, writeCachedCodexResults, getCachedCodexProject, fingerprintFile } from '../codex-cache.js'
 import type { Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
@@ -201,9 +201,6 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       const fp = await fingerprintFile(source.path)
       if (!fp) return
 
-      const content = await readSessionFile(source.path)
-      if (content === null) return
-      const lines = content.split('\n').filter(l => l.trim())
       let sessionModel: string | undefined
       let sessionId = ''
       let prevCumulativeTotal = 0
@@ -215,9 +212,18 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       let pendingUserMessage = ''
       let pendingOutputChars = 0
       let estCounter = 0
+      let sawAnyLine = false
       const results: ParsedProviderCall[] = []
 
-      for (const line of lines) {
+      // Stream the session file line by line. Heavy Codex sessions can exceed
+      // 250 MB on disk; reading the entire file into a string would either hit
+      // the readSessionFile cap or push V8 toward its 512 MB string limit
+      // after split('\n'). readSessionLines streams via readline so memory
+      // stays bounded to the longest line.
+      for await (const rawLine of readSessionLines(source.path)) {
+        sawAnyLine = true
+        const line = rawLine.trim()
+        if (!line) continue
         let entry: CodexEntry
         try {
           entry = JSON.parse(line) as CodexEntry
@@ -390,6 +396,11 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           pendingOutputChars = 0
         }
       }
+
+      // If the stream yielded nothing the file was unreadable, oversized, or
+      // empty. Skip cache write so a transient failure can't pin an empty
+      // result set against a fingerprint that would otherwise be re-parsed.
+      if (!sawAnyLine) return
 
       await writeCachedCodexResults(source.path, source.project, results, fp)
 
