@@ -1,0 +1,23 @@
+.codeburn-panel-label {
+  margin-left: 4px;
+}
+
+.codeburn-hero-label {
+  font-size: 1.2em;
+  font-weight: bold;
+}
+
+.codeburn-provider-cost {
+  margin-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.codeburn-budget-warning {
+  color: #e5a50a;
+  font-weight: bold;
+}
+
+.codeburn-stale-indicator {
+  opacity: 0.6;
+  font-style: italic;
+}
