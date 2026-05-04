@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { parseAllSessions } from './parser.js'
 import type { DateRange, SessionSummary } from './types.js'
 
@@ -20,27 +20,28 @@ export type YieldSummary = {
   details: SessionYield[]
 }
 
-function runGit(cmd: string, cwd: string): string | null {
+const SAFE_REF_PATTERN = /^[A-Za-z0-9._/\-]+$/
+
+function runGit(args: string[], cwd: string): string | null {
   try {
-    return execSync(cmd, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+    return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
   } catch {
     return null
   }
 }
 
 function isGitRepo(dir: string): boolean {
-  return runGit('git rev-parse --is-inside-work-tree', dir) === 'true'
+  return runGit(['rev-parse', '--is-inside-work-tree'], dir) === 'true'
 }
 
 function getMainBranch(cwd: string): string {
-  // Try to get default branch from remote
-  const result = runGit('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null', cwd)
+  const result = runGit(['symbolic-ref', 'refs/remotes/origin/HEAD'], cwd)
   if (result) {
-    return result.replace('refs/remotes/origin/', '')
+    const branch = result.replace('refs/remotes/origin/', '')
+    if (SAFE_REF_PATTERN.test(branch)) return branch
   }
 
-  // Fallback: check common names
-  const branches = runGit('git branch -a', cwd) ?? ''
+  const branches = runGit(['branch', '-a'], cwd) ?? ''
   if (branches.includes('main')) return 'main'
   if (branches.includes('master')) return 'master'
   return 'main'
@@ -58,14 +59,14 @@ function getCommitsInRange(cwd: string, since: Date, until: Date, mainBranch: st
   const untilStr = until.toISOString()
 
   const log = runGit(
-    `git log --all --since="${sinceStr}" --until="${untilStr}" --format="%H|%aI|%s"`,
+    ['log', '--all', `--since=${sinceStr}`, `--until=${untilStr}`, '--format=%H|%aI|%s'],
     cwd
   )
 
   if (!log) return []
 
   const mainCommits = new Set(
-    (runGit(`git log ${mainBranch} --format="%H"`, cwd) ?? '').split('\n').filter(Boolean)
+    (runGit(['log', mainBranch, '--format=%H'], cwd) ?? '').split('\n').filter(Boolean)
   )
 
   return log.split('\n').filter(Boolean).map(line => {
