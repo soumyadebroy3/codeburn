@@ -98,6 +98,13 @@ ZIP_PATH="${DIST_DIR}/${ZIP_NAME}"
 echo "▸ Packaging ${ZIP_NAME}..."
 (cd "${DIST_DIR}" && /usr/bin/ditto -c -k --keepParent "${BUNDLE_NAME}" "${ZIP_NAME}")
 
+CHECKSUM_NAME="${ZIP_NAME}.sha256"
+CHECKSUM_PATH="${DIST_DIR}/${CHECKSUM_NAME}"
+echo "▸ Computing SHA-256 checksum..."
+(cd "${DIST_DIR}" && shasum -a 256 "${ZIP_NAME}" > "${CHECKSUM_NAME}")
+
 echo ""
 echo "✓ Built ${ZIP_PATH}"
+echo "✓ Checksum ${CHECKSUM_PATH}"
+cat "${CHECKSUM_PATH}"
 ls -la "${DIST_DIR}"

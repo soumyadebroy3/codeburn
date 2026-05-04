@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
 import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -11,6 +12,7 @@ import { Readable } from 'node:stream'
 const RELEASE_API = 'https://api.github.com/repos/getagentseal/codeburn/releases/latest'
 const APP_BUNDLE_NAME = 'CodeBurnMenubar.app'
 const ASSET_PATTERN = /^CodeBurnMenubar-.*\.zip$/
+const CHECKSUM_PATTERN = /^CodeBurnMenubar-.*\.zip\.sha256$/
 const APP_PROCESS_NAME = 'CodeBurnMenubar'
 const SUPPORTED_OS = 'darwin'
 const MIN_MACOS_MAJOR = 14
@@ -19,6 +21,7 @@ export type InstallResult = { installedPath: string; launched: boolean }
 
 type ReleaseAsset = { name: string; browser_download_url: string }
 type ReleaseResponse = { tag_name: string; assets: ReleaseAsset[] }
+type ResolvedAssets = { zip: ReleaseAsset; checksum: ReleaseAsset | null }
 
 function userApplicationsDir(): string {
   return join(homedir(), 'Applications')
@@ -57,10 +60,9 @@ async function sysProductVersion(): Promise<string> {
   })
 }
 
-async function fetchLatestReleaseAsset(): Promise<ReleaseAsset> {
+async function fetchLatestReleaseAssets(): Promise<ResolvedAssets> {
   const response = await fetch(RELEASE_API, {
     headers: {
-      // Identify the installer so GitHub's abuse heuristics treat us as a known client.
       'User-Agent': 'codeburn-menubar-installer',
       Accept: 'application/vnd.github+json',
     },
@@ -69,14 +71,37 @@ async function fetchLatestReleaseAsset(): Promise<ReleaseAsset> {
     throw new Error(`GitHub release lookup failed: HTTP ${response.status}`)
   }
   const body = await response.json() as ReleaseResponse
-  const asset = body.assets.find(a => ASSET_PATTERN.test(a.name))
-  if (!asset) {
+  const zip = body.assets.find(a => ASSET_PATTERN.test(a.name))
+  if (!zip) {
     throw new Error(
       `No ${APP_BUNDLE_NAME} zip found in release ${body.tag_name}. ` +
       `Check https://github.com/getagentseal/codeburn/releases.`
     )
   }
-  return asset
+  const checksum = body.assets.find(a => CHECKSUM_PATTERN.test(a.name)) ?? null
+  return { zip, checksum }
+}
+
+async function verifyChecksum(archivePath: string, checksumUrl: string): Promise<void> {
+  const response = await fetch(checksumUrl, {
+    headers: { 'User-Agent': 'codeburn-menubar-installer' },
+    redirect: 'follow',
+  })
+  if (!response.ok) {
+    throw new Error(`Checksum download failed: HTTP ${response.status}`)
+  }
+  const text = await response.text()
+  const expected = text.trim().split(/\s+/)[0]!.toLowerCase()
+  const fileBytes = await readFile(archivePath)
+  const actual = createHash('sha256').update(fileBytes).digest('hex')
+  if (actual !== expected) {
+    throw new Error(
+      `Checksum mismatch for ${archivePath}.\n` +
+      `  Expected: ${expected}\n` +
+      `  Got:      ${actual}\n` +
+      `The download may be corrupted or tampered with.`
+    )
+  }
 }
 
 async function downloadToFile(url: string, destPath: string): Promise<void> {
@@ -134,13 +159,20 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
   }
 
   console.log('Looking up the latest CodeBurn Menubar release...')
-  const asset = await fetchLatestReleaseAsset()
+  const { zip, checksum } = await fetchLatestReleaseAssets()
 
   const stagingDir = await mkdtemp(join(tmpdir(), 'codeburn-menubar-'))
   try {
-    const archivePath = join(stagingDir, asset.name)
-    console.log(`Downloading ${asset.name}...`)
-    await downloadToFile(asset.browser_download_url, archivePath)
+    const archivePath = join(stagingDir, zip.name)
+    console.log(`Downloading ${zip.name}...`)
+    await downloadToFile(zip.browser_download_url, archivePath)
+
+    if (checksum) {
+      console.log('Verifying checksum...')
+      await verifyChecksum(archivePath, checksum.browser_download_url)
+    } else {
+      console.log('Warning: no checksum file found in release, skipping verification.')
+    }
 
     console.log('Unpacking...')
     await runCommand('/usr/bin/unzip', ['-q', archivePath, '-d', stagingDir])
