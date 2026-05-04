@@ -77,9 +77,8 @@ class CodeBurnIndicator extends PanelMenu.Button {
     });
 
     box.add_child(this._panelIcon);
-
-    if (!this._settings.get_boolean('compact-mode'))
-      box.add_child(this._panelLabel);
+    box.add_child(this._panelLabel);
+    this._panelLabel.visible = !this._settings.get_boolean('compact-mode');
 
     this.add_child(box);
   }
@@ -180,8 +179,8 @@ class CodeBurnIndicator extends PanelMenu.Button {
   }
 
   _rebuildPanelButton() {
-    this.remove_all_children();
-    this._buildPanelButton();
+    const compact = this._settings.get_boolean('compact-mode');
+    this._panelLabel.visible = !compact;
     this._updatePanel(this._lastPayload);
   }
 
