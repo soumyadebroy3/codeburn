@@ -71,9 +71,9 @@ final class AppStore {
         switchTask?.cancel()
         switchTask = Task {
             if selectedProvider == .all {
-                await refresh(includeOptimize: true, force: true)
+                await refresh(includeOptimize: false, force: true)
             } else {
-                async let main: Void = refresh(includeOptimize: true, force: true)
+                async let main: Void = refresh(includeOptimize: false, force: true)
                 async let all: Void = refreshQuietly(period: period)
                 _ = await (main, all)
             }
@@ -88,9 +88,9 @@ final class AppStore {
         switchTask?.cancel()
         switchTask = Task {
             if provider == .all {
-                await refresh(includeOptimize: true, force: true)
+                await refresh(includeOptimize: false, force: true)
             } else {
-                async let main: Void = refresh(includeOptimize: true, force: true)
+                async let main: Void = refresh(includeOptimize: false, force: true)
                 async let all: Void = refreshQuietly(period: selectedPeriod)
                 _ = await (main, all)
             }
@@ -119,8 +119,20 @@ final class AppStore {
             lastError = nil
         } catch {
             if Task.isCancelled { return }
-            lastError = String(describing: error)
             NSLog("CodeBurn: fetch failed for \(key.period.rawValue)/\(key.provider.rawValue): \(error)")
+            if includeOptimize, cache[key] == nil {
+                do {
+                    let fallback = try await DataClient.fetch(period: key.period, provider: key.provider, includeOptimize: false)
+                    guard !Task.isCancelled else { return }
+                    cache[key] = CachedPayload(payload: fallback, fetchedAt: Date())
+                    lastError = nil
+                    return
+                } catch {
+                    if Task.isCancelled { return }
+                    NSLog("CodeBurn: fallback fetch also failed: \(error)")
+                }
+            }
+            lastError = String(describing: error)
         }
 
         let allKey = PayloadCacheKey(period: selectedPeriod, provider: .all)
@@ -134,7 +146,7 @@ final class AppStore {
     /// Always uses the .all provider since the menubar badge shows total spend.
     func refreshQuietly(period: Period) async {
         do {
-            let fresh = try await DataClient.fetch(period: period, provider: .all, includeOptimize: true)
+            let fresh = try await DataClient.fetch(period: period, provider: .all, includeOptimize: false)
             cache[PayloadCacheKey(period: period, provider: .all)] = CachedPayload(payload: fresh, fetchedAt: Date())
         } catch {
             NSLog("CodeBurn: quiet refresh failed for \(period.rawValue): \(error)")

@@ -407,7 +407,7 @@ struct FooterBar: View {
             .fixedSize()
 
             Button {
-                Task { await store.refresh(includeOptimize: true, force: true) }
+                Task { await store.refresh(includeOptimize: false, force: true) }
             } label: {
                 Image(systemName: store.isLoading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))

@@ -171,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         lastRefreshTime = now
 
         Task {
-            async let main: Void = store.refresh(includeOptimize: true, force: true)
+            async let main: Void = store.refresh(includeOptimize: false, force: true)
             async let today: Void = store.refreshQuietly(period: .today)
             _ = await (main, today)
             refreshStatusButton()
@@ -207,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if self.store.selectedPeriod != .today || self.store.selectedProvider != .all {
                     await self.store.refreshQuietly(period: .today)
                 }
-                await self.store.refresh(includeOptimize: true, force: true)
+                await self.store.refresh(includeOptimize: false, force: true)
                 self.refreshStatusButton()
                 try? await Task.sleep(nanoseconds: refreshIntervalNanos)
             }
