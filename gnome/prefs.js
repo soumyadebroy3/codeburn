@@ -26,7 +26,7 @@ const PERIODS = [
   { id: 'week', label: '7 Days' },
   { id: '30days', label: '30 Days' },
   { id: 'month', label: 'Month' },
-  { id: 'all', label: 'All Time' },
+  { id: 'all', label: '6 Months' },
 ];
 
 export default class CodeBurnPreferences extends ExtensionPreferences {

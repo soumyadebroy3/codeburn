@@ -13,7 +13,7 @@ import { dateKey } from './day-aggregator.js'
 import { CompareView } from './compare.js'
 import { getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { planDisplayName } from './plans.js'
-import { getDateRange as getDateRangeShared, PERIODS, PERIOD_LABELS, type Period } from './cli-date.js'
+import { getDateRange, PERIODS, PERIOD_LABELS, type Period } from './cli-date.js'
 import { join } from 'path'
 import { patchStdoutForWindows } from './ink-win.js'
 
@@ -96,7 +96,7 @@ function gradientColor(pct: number): string {
 }
 
 function getPeriodRange(period: Period): { start: Date; end: Date } {
-  return getDateRangeShared(period).range
+  return getDateRange(period).range
 }
 
 type Layout = { dashWidth: number; wide: boolean; halfWidth: number; barWidth: number }

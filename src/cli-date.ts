@@ -113,7 +113,7 @@ export function getDateRange(period: string): { range: DateRange; label: string 
       return { range: { start, end }, label: 'Last 30 Days' }
     }
     case 'all': {
-      const start = new Date(now.getFullYear(), now.getMonth() - ALL_TIME_MONTHS, now.getDate())
+      const start = new Date(now.getFullYear(), now.getMonth() - ALL_TIME_MONTHS, 1)
       return { range: { start, end }, label: 'Last 6 months' }
     }
     default: {

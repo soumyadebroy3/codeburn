@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   getDateRange,
   PERIODS,
@@ -6,6 +6,10 @@ import {
   toPeriod,
   type Period,
 } from '../src/cli-date.js'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('getDateRange', () => {
   it('"all" is bounded to the last 6 months, not epoch', () => {
@@ -18,27 +22,26 @@ describe('getDateRange', () => {
     // dashboard bug) or any pre-2000 date.
     expect(range.start.getFullYear()).toBeGreaterThan(2000)
 
-    // Roughly 6 months back. Accept 5-7 months to absorb end-of-month
-    // clamping (e.g. on May 31, JS rolls Nov 31 -> Dec 1, shifting the
-    // computed month forward by one).
     const monthsDiff =
       (now.getFullYear() - range.start.getFullYear()) * 12 +
       (now.getMonth() - range.start.getMonth())
-    expect(monthsDiff).toBeGreaterThanOrEqual(5)
-    expect(monthsDiff).toBeLessThanOrEqual(7)
+    expect(monthsDiff).toBe(6)
+    expect(range.start.getDate()).toBe(1)
 
     // End is today, end of day.
     expect(range.end.getHours()).toBe(23)
     expect(range.end.getMinutes()).toBe(59)
   })
 
-  it('CLI and dashboard agree on "all" semantics (no Date(0) drift)', () => {
-    const a = getDateRange('all')
-    const b = getDateRange('all')
-    expect(a.range.start.getTime()).toBe(b.range.start.getTime())
-    expect(a.label).toBe(b.label)
-    // Regression guard: must never silently fall back to epoch.
-    expect(a.range.start.getFullYear()).toBeGreaterThan(2000)
+  it('"all" does not overflow past the target month at end-of-month', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 31, 12, 0, 0))
+
+    const { range } = getDateRange('all')
+
+    expect(range.start.getFullYear()).toBe(2026)
+    expect(range.start.getMonth()).toBe(1)
+    expect(range.start.getDate()).toBe(1)
   })
 
   it('"week" returns the last 7 days', () => {
