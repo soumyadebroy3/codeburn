@@ -11,7 +11,7 @@ import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateS
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { renderDashboard } from './dashboard.js'
-import { parseDateRangeFlags } from './cli-date.js'
+import { parseDateRangeFlags, getDateRange, toPeriod, type Period } from './cli-date.js'
 import { runOptimize, scanAndDetect } from './optimize.js'
 import { renderCompare } from './compare.js'
 import { getAllProviders } from './providers/index.js'
@@ -33,56 +33,6 @@ async function hydrateCache() {
   } catch {
     return emptyCache()
   }
-}
-
-function getDateRange(period: string): { range: DateRange; label: string } {
-  const now = new Date()
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
-
-  switch (period) {
-    case 'today': {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      return { range: { start, end }, label: `Today (${toDateString(start)})` }
-    }
-    case 'yesterday': {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-      const yesterdayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999)
-      return { range: { start, end: yesterdayEnd }, label: `Yesterday (${toDateString(start)})` }
-    }
-    case 'week': {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
-      return { range: { start, end }, label: 'Last 7 Days' }
-    }
-    case 'month': {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { range: { start, end }, label: `${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}` }
-    }
-    case '30days': {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30)
-      return { range: { start, end }, label: 'Last 30 Days' }
-    }
-    case 'all': {
-      // Cap "All Time" to the last 6 months. Older data is rarely actionable for a cost
-      // tracker and keeps the parse path bounded so providers like Codex/Cursor with sparse
-      // data still load in seconds.
-      const start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate())
-      return { range: { start, end }, label: 'Last 6 months' }
-    }
-    default: {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
-      return { range: { start, end }, label: 'Last 7 Days' }
-    }
-  }
-}
-
-type Period = 'today' | 'week' | '30days' | 'month' | 'all'
-
-function toPeriod(s: string): Period {
-  if (s === 'today') return 'today'
-  if (s === 'month') return 'month'
-  if (s === '30days') return '30days'
-  if (s === 'all') return 'all'
-  return 'week'
 }
 
 function collect(val: string, acc: string[]): string[] {

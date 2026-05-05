@@ -85,7 +85,7 @@ codeburn yield                  # track productive vs reverted/abandoned spend
 codeburn yield -p 30days        # yield analysis for last 30 days
 ```
 
-Arrow keys switch between Today, 7 Days, 30 Days, Month, and All Time. Press `q` to quit, `1` `2` `3` `4` `5` as shortcuts, `c` to open model comparison, `o` to open optimize. The dashboard auto-refreshes every 30 seconds by default (`--refresh 0` to disable). It also shows average cost per session and the five most expensive sessions across all projects.
+Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--from` / `--to` for an exact historical window). Press `q` to quit, `1` `2` `3` `4` `5` as shortcuts, `c` to open model comparison, `o` to open optimize. The dashboard auto-refreshes every 30 seconds by default (`--refresh 0` to disable). It also shows average cost per session and the five most expensive sessions across all projects.
 
 ## Supported Providers
 
@@ -196,7 +196,7 @@ You can also open it inline from the dashboard: press `o` when a finding count a
 ### Compare
 
 ```bash
-codeburn compare                        # interactive model picker (default: all time)
+codeburn compare                        # interactive model picker (default: last 6 months)
 codeburn compare -p week                # last 7 days
 codeburn compare -p today               # today only
 codeburn compare --provider claude      # Claude Code sessions only

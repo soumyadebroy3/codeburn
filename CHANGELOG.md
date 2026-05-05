@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (CLI)
+- **`all` period semantics unified between CLI and dashboard.** The dashboard treated `--period all` as all-time (epoch start) while the CLI bounded it to the last 6 months. Both now consistently mean "Last 6 months". Period helpers (`Period`, `PERIODS`, `PERIOD_LABELS`, `toPeriod`, `getDateRange`) consolidated into `cli-date.ts`. Use `--from` / `--to` for unbounded historical ranges.
+
 ## 0.9.6 - 2026-05-03
 
 ### Added (CLI)

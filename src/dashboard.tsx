@@ -13,20 +13,11 @@ import { dateKey } from './day-aggregator.js'
 import { CompareView } from './compare.js'
 import { getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { planDisplayName } from './plans.js'
+import { getDateRange, PERIODS, PERIOD_LABELS, type Period } from './cli-date.js'
 import { join } from 'path'
 import { patchStdoutForWindows } from './ink-win.js'
 
-type Period = 'today' | 'week' | '30days' | 'month' | 'all'
 type View = 'dashboard' | 'optimize' | 'compare'
-
-const PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
-const PERIOD_LABELS: Record<Period, string> = {
-  today: 'Today',
-  week: '7 Days',
-  '30days': '30 Days',
-  month: 'This Month',
-  all: 'All Time',
-}
 
 const MIN_WIDE = 90
 const ORANGE = '#FF8C42'
@@ -104,16 +95,8 @@ function gradientColor(pct: number): string {
   return toHex(lerp(255, 245, t), lerp(140, 91, t), lerp(66, 91, t))
 }
 
-function getDateRange(period: Period): { start: Date; end: Date } {
-  const now = new Date()
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
-  switch (period) {
-    case 'today': return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate()), end }
-    case 'week': return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7), end }
-    case '30days': return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30), end }
-    case 'month': return { start: new Date(now.getFullYear(), now.getMonth(), 1), end }
-    case 'all': return { start: new Date(0), end }
-  }
+function getPeriodRange(period: Period): { start: Date; end: Date } {
+  return getDateRange(period).range
 }
 
 type Layout = { dashWidth: number; wide: boolean; halfWidth: number; barWidth: number }
@@ -711,7 +694,7 @@ function InteractiveDashboard({ initialProjects, initialPeriod, initialProvider,
     let cancelled = false
     async function scan() {
       if (projects.length === 0) { setOptimizeResult(null); return }
-      const result = await scanAndDetect(projects, getDateRange(period))
+      const result = await scanAndDetect(projects, getPeriodRange(period))
       if (!cancelled) setOptimizeResult(result)
     }
     scan()
@@ -723,7 +706,7 @@ function InteractiveDashboard({ initialProjects, initialPeriod, initialProvider,
     setLoading(true)
     setOptimizeResult(null)
     try {
-      const range = getDateRange(p)
+      const range = getPeriodRange(p)
       const data = await parseAllSessions(range, prov)
       if (reloadGenerationRef.current !== generation) return
 
@@ -828,7 +811,7 @@ function StaticDashboard({ projects, period, activeProvider, planUsage }: { proj
 
 export async function renderDashboard(period: Period = 'week', provider: string = 'all', refreshSeconds?: number, projectFilter?: string[], excludeFilter?: string[], customRange?: DateRange | null): Promise<void> {
   await loadPricing()
-  const range = customRange ?? getDateRange(period)
+  const range = customRange ?? getPeriodRange(period)
   const filteredProjects = filterProjectsByName(await parseAllSessions(range, provider), projectFilter, excludeFilter)
   const planUsage = await getPlanUsageOrNull()
   const isTTY = process.stdin.isTTY && process.stdout.isTTY
