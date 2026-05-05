@@ -6,6 +6,7 @@ import {
   detectLowReadEditRatio,
   detectCacheBloat,
   detectBloatedClaudeMd,
+  detectSessionOutliers,
   computeHealth,
   computeTrend,
   type ToolCall,
@@ -20,6 +21,39 @@ function call(name: string, input: Record<string, unknown>, sessionId = 's1', pr
 
 function emptyProjects(): ProjectSummary[] {
   return []
+}
+
+function projectWithSessions(costs: number[], project = 'app'): ProjectSummary {
+  const sessions = costs.map((cost, i) => {
+    const tokens = Math.round(cost * 1000)
+    return {
+      sessionId: `s${i + 1}`,
+      project,
+      firstTimestamp: `2026-05-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+      lastTimestamp: `2026-05-${String(i + 1).padStart(2, '0')}T10:30:00Z`,
+      totalCostUSD: cost,
+      totalInputTokens: tokens,
+      totalOutputTokens: tokens,
+      totalCacheReadTokens: 0,
+      totalCacheWriteTokens: 0,
+      apiCalls: 1,
+      turns: [],
+      modelBreakdown: {},
+      toolBreakdown: {},
+      mcpBreakdown: {},
+      bashBreakdown: {},
+      categoryBreakdown: {} as ProjectSummary['sessions'][number]['categoryBreakdown'],
+      skillBreakdown: {},
+    }
+  })
+
+  return {
+    project,
+    projectPath: `/tmp/${project}`,
+    sessions,
+    totalCostUSD: costs.reduce((sum, cost) => sum + cost, 0),
+    totalApiCalls: sessions.length,
+  }
 }
 
 describe('detectJunkReads', () => {
@@ -204,6 +238,44 @@ describe('detectBloatedClaudeMd', () => {
   it('returns null for empty project set', () => {
     const result = detectBloatedClaudeMd(new Set())
     expect(result).toBeNull()
+  })
+})
+
+describe('detectSessionOutliers', () => {
+  it('returns null when there are too few sessions for a project baseline', () => {
+    expect(detectSessionOutliers([projectWithSessions([0.5, 4])])).toBeNull()
+  })
+
+  it('returns null when no session exceeds twice the project average', () => {
+    expect(detectSessionOutliers([projectWithSessions([1, 1.2, 1.4, 1.6])])).toBeNull()
+  })
+
+  it('does not flag the exact 2x boundary', () => {
+    expect(detectSessionOutliers([projectWithSessions([1, 1, 2])])).toBeNull()
+  })
+
+  it('flags sessions costing more than twice their project average', () => {
+    const finding = detectSessionOutliers([projectWithSessions([1, 1, 1, 10])])
+    expect(finding).not.toBeNull()
+    expect(finding!.title).toContain('high-cost session outlier')
+    expect(finding!.explanation).toContain('app/s4')
+    expect(finding!.impact).toBe('medium')
+    expect(finding!.tokensSaved).toBeGreaterThan(0)
+  })
+
+  it('ignores tiny absolute-cost outliers', () => {
+    expect(detectSessionOutliers([projectWithSessions([0.01, 0.01, 0.01, 0.2])])).toBeNull()
+  })
+
+  it('isolates baselines per project', () => {
+    const finding = detectSessionOutliers([
+      projectWithSessions([8, 9, 10], 'web'),
+      projectWithSessions([1, 1, 1, 12], 'api'),
+    ])
+
+    expect(finding).not.toBeNull()
+    expect(finding!.explanation).toContain('api/s4')
+    expect(finding!.explanation).not.toContain('web/')
   })
 })
 

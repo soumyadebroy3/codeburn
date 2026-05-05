@@ -74,6 +74,10 @@ const GHOST_COMMANDS_MEDIUM_THRESHOLD = 10
 const MCP_NEW_CONFIG_GRACE_MS = 24 * 60 * 60 * 1000
 const BASH_DEFAULT_LIMIT = 30000
 const BASH_RECOMMENDED_LIMIT = 15000
+const MIN_SESSIONS_FOR_OUTLIER = 3
+const SESSION_OUTLIER_MULTIPLIER = 2
+const MIN_SESSION_OUTLIER_COST_USD = 1
+const SESSION_OUTLIER_PREVIEW = 5
 
 // ============================================================================
 // Scoring constants
@@ -1202,6 +1206,77 @@ export function detectBashBloat(): WasteFinding | null {
   }
 }
 
+function sessionTokenTotal(session: ProjectSummary['sessions'][number]): number {
+  return session.totalInputTokens
+    + session.totalOutputTokens
+    + session.totalCacheReadTokens
+    + session.totalCacheWriteTokens
+}
+
+export function detectSessionOutliers(projects: ProjectSummary[]): WasteFinding | null {
+  type Outlier = {
+    project: string
+    sessionId: string
+    date: string
+    cost: number
+    avgCost: number
+    ratio: number
+    tokenExcess: number
+  }
+
+  const outliers: Outlier[] = []
+
+  for (const project of projects) {
+    const sessions = project.sessions.filter(s => s.totalCostUSD > 0)
+    if (sessions.length < MIN_SESSIONS_FOR_OUTLIER) continue
+
+    const totalCost = sessions.reduce((sum, s) => sum + s.totalCostUSD, 0)
+    const totalTokens = sessions.reduce((sum, s) => sum + sessionTokenTotal(s), 0)
+    for (const session of sessions) {
+      const avgCost = (totalCost - session.totalCostUSD) / (sessions.length - 1)
+      const avgTokens = (totalTokens - sessionTokenTotal(session)) / (sessions.length - 1)
+      if (avgCost <= 0) continue
+
+      const ratio = session.totalCostUSD / avgCost
+      if (ratio <= SESSION_OUTLIER_MULTIPLIER) continue
+      if (session.totalCostUSD < MIN_SESSION_OUTLIER_COST_USD) continue
+
+      outliers.push({
+        project: project.project,
+        sessionId: session.sessionId,
+        date: session.firstTimestamp.slice(0, 10),
+        cost: session.totalCostUSD,
+        avgCost,
+        ratio,
+        tokenExcess: Math.max(0, sessionTokenTotal(session) - avgTokens),
+      })
+    }
+  }
+
+  if (outliers.length === 0) return null
+
+  outliers.sort((a, b) => b.cost - a.cost)
+  const preview = outliers.slice(0, SESSION_OUTLIER_PREVIEW)
+  const list = preview
+    .map(o => `${o.project}/${o.sessionId} on ${o.date}: ${formatCost(o.cost)} (${o.ratio.toFixed(1)}x avg)`)
+    .join('; ')
+  const extra = outliers.length > preview.length ? `; +${outliers.length - preview.length} more` : ''
+  const tokensSaved = Math.round(outliers.reduce((sum, o) => sum + o.tokenExcess, 0))
+  const totalExcessCost = outliers.reduce((sum, o) => sum + Math.max(0, o.cost - o.avgCost), 0)
+
+  return {
+    title: `${outliers.length} high-cost session outlier${outliers.length === 1 ? '' : 's'}`,
+    explanation: `Sessions costing more than ${SESSION_OUTLIER_MULTIPLIER}x their peer-session average in the same project: ${list}${extra}. These usually come from broad prompts, runaway loops, or context-heavy work that should be split into smaller sessions.`,
+    impact: outliers.length >= 3 || totalExcessCost >= 10 ? 'high' : 'medium',
+    tokensSaved,
+    fix: {
+      type: 'paste',
+      label: 'For expensive work, start with a tighter operating constraint:',
+      text: 'Before making changes, summarize the smallest viable plan. Keep context narrow, avoid broad searches, and stop after the first working patch so I can review before continuing.',
+    },
+  }
+}
+
 // ============================================================================
 // Scoring
 // ============================================================================
@@ -1324,6 +1399,7 @@ export async function scanAndDetect(
     () => detectDuplicateReads(toolCalls, dateRange),
     () => detectUnusedMcp(toolCalls, projects, projectCwds, mcpCoverage),
     () => detectMcpToolCoverage(projects, mcpCoverage),
+    () => detectSessionOutliers(projects),
     () => detectBloatedClaudeMd(projectCwds),
     () => detectBashBloat(),
   ]
