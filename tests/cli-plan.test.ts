@@ -11,9 +11,12 @@ function runCli(args: string[], home: string) {
     env: {
       ...process.env,
       HOME: home,
-      // node's os.homedir() reads USERPROFILE on Windows, HOME elsewhere —
-      // override both so the test works on every CI platform.
+      // node's os.homedir() reads USERPROFILE on Windows, HOME elsewhere.
+      // Override the full Windows quartet so the test works on every CI
+      // platform regardless of which path resolution shape Node picks.
       USERPROFILE: home,
+      HOMEPATH: home,
+      HOMEDRIVE: '',
     },
     encoding: 'utf-8',
   })
