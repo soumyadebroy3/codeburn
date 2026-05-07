@@ -5,14 +5,69 @@ on:
     branches: [main]
   pull_request:
 
+# Default-restricted permissions. Each job opts in to what it actually needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  build-and-test:
+    name: Test (Node 22, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install (clean)
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        # CODEBURN_DEV=1 lets bundle-litellm.mjs run with a floating ref during CI on
+        # main (release builds run from release-npm.yml with the pin enforced).
+        env:
+          CODEBURN_DEV: '1'
+        run: npm test --silent
+
+      - name: Build
+        env:
+          CODEBURN_DEV: '1'
+        run: npm run build
+
+      - name: Smoke-test built CLI
+        run: node dist/cli.js --version
+
   semgrep:
+    name: Semgrep
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Install Semgrep
-        run: pip install semgrep
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep (pinned)
+        run: pip install 'semgrep==1.93.0'
 
       - name: Run Semgrep bracket-assign guard
         run: |
@@ -25,3 +80,22 @@ jobs:
             jq -r '.results[] | "::error file=\(.path),line=\(.start.line)::\(.extra.message)"' semgrep-out.json
             exit 1
           fi
+
+  swift-build:
+    name: Swift menubar build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Build
+        working-directory: mac
+        run: swift build
+
+      - name: Test
+        working-directory: mac
+        run: swift test

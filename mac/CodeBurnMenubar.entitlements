@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Minimal entitlements for the CodeBurn menubar app.
+
+        Sandbox is intentionally OFF: the app must spawn the user's `codeburn`
+        CLI (Homebrew/npm/etc.), read Claude/Codex credentials from the user's
+        Keychain, and persist refresh-token caches under
+        ~/Library/Application Support/CodeBurn/. None of this fits inside a
+        sandbox without temporary-exception entitlements that defeat the
+        sandbox's purpose for our threat model.
+
+        Hardened Runtime is ON (selected via `codesign --options=runtime`).
+        That alone gives us:
+            - DYLD_INSERT_LIBRARIES blocked
+            - Library validation enforced
+            - JIT, allow-unsigned-executable-memory, allow-dyld-environment
+              all default-OFF (we don't enable them below)
+            - Apple Events / Audio / Camera / Mic / Photos / Calendars /
+              Contacts / Reminders / Documents / Downloads / Location are all
+              implicitly denied unless we add the corresponding entitlement.
+
+        We grant exactly two:
+            - cs.allow-jit / cs.allow-unsigned-executable-memory: NOT set,
+              so a tampered Foundation/AppKit dylib cannot inject code.
+            - cs.disable-library-validation: NOT set, so loaded frameworks
+              must be Apple-signed or share our team identifier (when we
+              eventually have a Developer ID).
+
+        When a paid Apple Developer ID becomes available, replace the ad-hoc
+        codesign step in mac/Scripts/package-app.sh with a Developer ID Application
+        signature and run `xcrun notarytool submit` to notarize. The
+        entitlements below do NOT need to change for that move; they are
+        already compatible with notarization.
+    -->
+
+    <!-- Required by SMAppService for login-item registration. Not strictly an entitlement,
+         but documenting here that we explicitly do NOT request the auto-launch one because
+         SMAppService.mainApp uses the bundle's SMLoginItem property already. -->
+
+    <!-- Network usage: the menubar talks to api.github.com (UpdateChecker) and
+         platform.claude.com (Claude OAuth refresh). No exception entitlement
+         needed for an unsandboxed app — outbound TCP works without one. -->
+</dict>
+</plist>

@@ -381,7 +381,7 @@ enum ClaudeCredentialStore {
             // Best effort — surface to logs but do not abandon the rotated
             // token. Next refresh will retry persistence; UI will continue
             // working from the in-memory cache.
-            NSLog("CodeBurn: cache write failed during refresh rotation: %@", String(describing: error))
+            LogSanitizer.logSafe("Claude cache write failed during refresh rotation", error)
         }
         return updated
     }

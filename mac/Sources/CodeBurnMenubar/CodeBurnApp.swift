@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Observation
+import ServiceManagement
 
 private let refreshIntervalSeconds: UInt64 = 30
 private let nanosPerSecond: UInt64 = 1_000_000_000
@@ -73,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         installLaunchAgentIfNeeded()
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
+        warnOnUntrustedBinaryPath()
         Task { await updateChecker.checkIfNeeded() }
     }
 
@@ -126,11 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private static let launchAgentLabel = "com.codeburn.refresh"
+    private static let launchAgentFilename = launchAgentLabel + ".plist"
+
+    private func launchAgentPath() -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Library/LaunchAgents/\(Self.launchAgentFilename)"
+    }
+
     private func installLaunchAgentIfNeeded() {
-        let fm = FileManager.default
-        let agentName = "com.codeburn.refresh.plist"
-        let home = fm.homeDirectoryForCurrentUser.path
-        let destPath = "\(home)/Library/LaunchAgents/\(agentName)"
+        let destPath = launchAgentPath()
 
         let plist = """
 <?xml version="1.0" encoding="UTF-8"?>
@@ -138,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.codeburn.refresh</string>
+    <string>\(Self.launchAgentLabel)</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/osascript</string>
@@ -156,50 +163,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 """
 
         do {
-            let existing = try? String(contentsOfFile: destPath, encoding: .utf8)
+            // Read existing through SafeFile so a planted symlink at the LaunchAgents path
+            // does NOT cause us to consider an attacker-controlled file as "the current
+            // plist" and skip the rewrite. (SafeFile.read throws on symlinks.)
+            let existing: String? = (try? SafeFile.read(from: destPath, maxBytes: 16 * 1024))
+                .flatMap { String(data: $0, encoding: .utf8) }
             if existing == plist { return }
 
-            try fm.createDirectory(atPath: "\(home)/Library/LaunchAgents", withIntermediateDirectories: true)
-            try plist.write(toFile: destPath, atomically: true, encoding: .utf8)
+            // SafeFile.write opens the temp file with O_NOFOLLOW + O_EXCL and renames atomically;
+            // a pre-planted symlink at destPath is rejected with Error.symlinkDetected.
+            guard let payload = plist.data(using: .utf8) else { return }
+            try SafeFile.write(payload, to: destPath, mode: 0o644)
 
             let unload = Process()
             unload.launchPath = "/bin/launchctl"
-            unload.arguments = ["unload", destPath]
+            unload.arguments = ["bootout", "gui/\(getuid())/\(Self.launchAgentLabel)"]
             try? unload.run()
             unload.waitUntilExit()
 
             let load = Process()
             load.launchPath = "/bin/launchctl"
-            load.arguments = ["load", destPath]
+            load.arguments = ["bootstrap", "gui/\(getuid())", destPath]
             try load.run()
             load.waitUntilExit()
         } catch {
-            NSLog("CodeBurn: LaunchAgent setup failed: \(error)")
+            LogSanitizer.logSafe("LaunchAgent setup failed", error)
         }
     }
 
+    /// Tear down the LaunchAgent installed by `installLaunchAgentIfNeeded`. Called from
+    /// `applicationWillTerminate` so a user who quits CodeBurn doesn't leave an osascript
+    /// firing every 30 s indefinitely.
+    private func uninstallLaunchAgent() {
+        let destPath = launchAgentPath()
+        let bootout = Process()
+        bootout.launchPath = "/bin/launchctl"
+        bootout.arguments = ["bootout", "gui/\(getuid())/\(Self.launchAgentLabel)"]
+        try? bootout.run()
+        bootout.waitUntilExit()
+        try? FileManager.default.removeItem(atPath: destPath)
+    }
+
     private func registerLoginItemIfNeeded() {
-        let key = "codeburn.loginItemRegistered"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-
-        let appPath = Bundle.main.bundlePath
-        let script = "tell application \"System Events\" to make login item at end with properties {path:\"\(appPath)\", hidden:false}"
-
-        let process = Process()
-        process.launchPath = "/usr/bin/osascript"
-        process.arguments = ["-e", script]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                UserDefaults.standard.set(true, forKey: key)
+        // SMAppService.mainApp registers the running .app as a login item without invoking
+        // AppleScript or System Events. Replaces a string-interpolated AppleScript path
+        // (which broke if Bundle.main.bundlePath contained a literal `"`) and removes the
+        // AppleEvents privacy prompt.
+        if #available(macOS 13.0, *) {
+            let svc = SMAppService.mainApp
+            switch svc.status {
+            case .enabled:
+                return
+            case .requiresApproval, .notRegistered, .notFound:
+                do {
+                    try svc.register()
+                } catch {
+                    LogSanitizer.logSafe("Login item registration failed", error)
+                }
+            @unknown default:
+                return
             }
-        } catch {
-            NSLog("CodeBurn: Login item registration failed: \(error)")
         }
+        // macOS < 13 falls through silently. The minimum supported version of the menubar
+        // is 14.0 (LSMinimumSystemVersion) so this branch is dead; kept for compile-time
+        // availability handling only.
     }
 
     private var lastRefreshTime: Date = .distantPast
@@ -354,6 +381,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.pendingRefreshWork?.cancel()
                 let work = DispatchWorkItem { [weak self] in
                     self?.refreshStatusButton()
+                    // Surface a system notification when aggregate quota
+                    // crosses a severity threshold (warn/crit/danger).
+                    if let self {
+                        QuotaNotifier.shared.observe(self.store.aggregateQuotaStatus)
+                    }
                     self?.observeStore()
                 }
                 self.pendingRefreshWork = work
@@ -611,6 +643,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Make uninstall idempotent and survive force-quits separately via
+        // a future cleanup CLI.
+        uninstallLaunchAgent()
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+
+    /// One-shot warning at startup if the user's PATH resolves `codeburn` to a directory
+    /// outside Homebrew/system locations. Defends against trivial PATH-shadowing attacks
+    /// (e.g. a malicious npm postinstall planting `~/.npm-global/bin/codeburn`). We log
+    /// rather than refuse because some legitimate installers (Volta, asdf, n) live under
+    /// `$HOME` and the user has explicit consent.
+    private func warnOnUntrustedBinaryPath() {
+        let resolved = CodeburnCLI.resolveBinaryPath()
+        guard let path = resolved.path else { return }
+        if resolved.trusted { return }
+        NSLog(
+            "CodeBurn: 'codeburn' resolved to %@ (outside trusted Homebrew/system locations). " +
+            "If you didn't install it there, run `which codeburn` and verify.",
+            path
+        )
     }
 
     // MARK: - NSPopoverDelegate

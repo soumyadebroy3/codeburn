@@ -1,12 +1,25 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, mkdir, open, rename, unlink } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
+import { randomBytes } from 'crypto'
 import snapshotData from './data/litellm-snapshot.json'
 
 export type ModelCosts = {
   inputCostPerToken: number
   outputCostPerToken: number
+  /**
+   * 5-minute ephemeral cache write rate. Anthropic charges 1.25× the base
+   * input rate. The historical `cache_creation_input_token_cost` LiteLLM
+   * field maps here.
+   */
   cacheWriteCostPerToken: number
+  /**
+   * 1-hour ephemeral cache write rate. Anthropic charges 2× the base input
+   * rate. LiteLLM doesn't currently expose a separate field, so we derive
+   * `inputCostPerToken * 2` when not provided. Heavy Claude Code users
+   * default to 1h cache, so this is the dominant rate in practice.
+   */
+  cacheWrite1hCostPerToken: number
   cacheReadCostPerToken: number
   webSearchCostPerRequest: number
   fastMultiplier: number
@@ -35,11 +48,19 @@ function loadSnapshot(): Map<string, ModelCosts> {
   const map = new Map<string, ModelCosts>()
   for (const [name, raw] of Object.entries(snapshotData as unknown as Record<string, SnapshotEntry>)) {
     const [input, output, cacheWrite, cacheRead] = raw
+    // Defensively floor input rate to a finite non-negative number. The
+    // snapshot entry shape promises a number, but a hand-edited entry that
+    // shipped `null` here would otherwise cascade NaN through every
+    // *PerToken multiplication and silently zero out (or break with NaN)
+    // every cost calculation downstream.
+    const inRate = Number.isFinite(input) && input >= 0 ? input : 0
+    const outRate = Number.isFinite(output) && output >= 0 ? output : 0
     map.set(name, {
-      inputCostPerToken: input,
-      outputCostPerToken: output,
-      cacheWriteCostPerToken: cacheWrite ?? input * 1.25,
-      cacheReadCostPerToken: cacheRead ?? input * 0.1,
+      inputCostPerToken: inRate,
+      outputCostPerToken: outRate,
+      cacheWriteCostPerToken: typeof cacheWrite === 'number' && Number.isFinite(cacheWrite) && cacheWrite >= 0 ? cacheWrite : inRate * 1.25,
+      cacheWrite1hCostPerToken: inRate * 2,
+      cacheReadCostPerToken: typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0 ? cacheRead : inRate * 0.1,
       webSearchCostPerRequest: WEB_SEARCH_COST,
       fastMultiplier: FAST_MULTIPLIERS[name] ?? 1,
     })
@@ -87,6 +108,7 @@ function parseLiteLLMEntry(entry: LiteLLMEntry): ModelCosts | null {
     inputCostPerToken: inputCost,
     outputCostPerToken: outputCost,
     cacheWriteCostPerToken: cacheWrite,
+    cacheWrite1hCostPerToken: inputCost * 2,
     cacheReadCostPerToken: cacheRead,
     webSearchCostPerRequest: WEB_SEARCH_COST,
     fastMultiplier: entry.provider_specific_entry?.fast ?? 1,
@@ -111,10 +133,28 @@ async function fetchAndCachePricing(): Promise<Map<string, ModelCosts>> {
   }
 
   await mkdir(getCacheDir(), { recursive: true })
-  await writeFile(getCachePath(), JSON.stringify({
+  // Atomic-rename pattern matches daily-cache.ts / codex-cache.ts so a crash
+  // mid-write never leaves a half-written pricing JSON. Concurrent CLI
+  // invocations race only on the final rename (last-writer-wins, both with
+  // valid content) instead of interleaving bytes.
+  const finalPath = getCachePath()
+  const tempPath = `${finalPath}.${randomBytes(8).toString('hex')}.tmp`
+  const payload = JSON.stringify({
     timestamp: Date.now(),
     data: Object.fromEntries(pricing),
-  }))
+  })
+  const handle = await open(tempPath, 'w', 0o600)
+  try {
+    await handle.writeFile(payload, { encoding: 'utf-8' })
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  try {
+    await rename(tempPath, finalPath)
+  } catch {
+    try { await unlink(tempPath) } catch { /* ignore */ }
+  }
 
   return pricing
 }
@@ -124,7 +164,21 @@ async function loadCachedPricing(): Promise<Map<string, ModelCosts> | null> {
     const raw = await readFile(getCachePath(), 'utf-8')
     const cached = JSON.parse(raw) as { timestamp: number; data: Record<string, ModelCosts> }
     if (Date.now() - cached.timestamp > CACHE_TTL_MS) return null
-    return new Map(Object.entries(cached.data))
+    const map = new Map<string, ModelCosts>()
+    for (const [name, raw] of Object.entries(cached.data)) {
+      // Migration: cache files written before the 1h-cache split land here
+      // missing `cacheWrite1hCostPerToken`. Default it from the input rate so
+      // arithmetic stays finite even when reading a stale file.
+      const inRate = Number.isFinite(raw.inputCostPerToken) ? raw.inputCostPerToken : 0
+      map.set(name, {
+        ...raw,
+        cacheWrite1hCostPerToken: typeof raw.cacheWrite1hCostPerToken === 'number'
+          && Number.isFinite(raw.cacheWrite1hCostPerToken)
+          ? raw.cacheWrite1hCostPerToken
+          : inRate * 2,
+      })
+    }
+    return map
   } catch {
     return null
   }
@@ -239,10 +293,22 @@ export function calculateCost(
   model: string,
   inputTokens: number,
   outputTokens: number,
+  /**
+   * 5-minute ephemeral cache writes (priced at 1.25× input). For backward
+   * compatibility, callers that don't yet split by TTL pass the entire
+   * cache_creation total here and 0 for `cacheCreationTokens1h` — that
+   * preserves old behaviour byte-for-byte.
+   */
   cacheCreationTokens: number,
   cacheReadTokens: number,
   webSearchRequests: number,
   speed: 'standard' | 'fast' = 'standard',
+  /**
+   * 1-hour ephemeral cache writes (priced at 2× input). Default 0 so existing
+   * callers in third-party code continue to compile and compute the same
+   * numbers they did before the cache-tier split.
+   */
+  cacheCreationTokens1h: number = 0,
 ): number {
   const costs = getModelCosts(model)
   if (!costs) {
@@ -276,6 +342,7 @@ export function calculateCost(
     safe(inputTokens) * costs.inputCostPerToken +
     safe(outputTokens) * costs.outputCostPerToken +
     safe(cacheCreationTokens) * costs.cacheWriteCostPerToken +
+    safe(cacheCreationTokens1h) * costs.cacheWrite1hCostPerToken +
     safe(cacheReadTokens) * costs.cacheReadCostPerToken +
     safe(webSearchRequests) * costs.webSearchCostPerRequest
   )

@@ -1,16 +1,20 @@
-import { readFile, writeFile, mkdir, rename, stat, unlink } from 'fs/promises'
+import { open, readFile, writeFile, mkdir, rename, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 
 import type { ParsedProviderCall } from './providers/types.js'
 
-const CURSOR_CACHE_VERSION = 2
+const CURSOR_CACHE_VERSION = 3
+const FINGERPRINT_BYTES = 256
+
+type DbFingerprint = { mtimeMs: number; size: number; headHash: string }
 
 type ResultCache = {
   version?: number
   dbMtimeMs: number
   dbSizeBytes: number
+  dbHeadHash?: string
   calls: ParsedProviderCall[]
 }
 
@@ -24,10 +28,23 @@ function getCachePath(): string {
   return join(getCacheDir(), CACHE_FILE)
 }
 
-async function getDbFingerprint(dbPath: string): Promise<{ mtimeMs: number; size: number } | null> {
+async function hashHead(filePath: string, size: number): Promise<string> {
+  const handle = await open(filePath, 'r')
+  try {
+    const len = Math.min(FINGERPRINT_BYTES, size)
+    const buf = Buffer.alloc(len)
+    if (len > 0) await handle.read(buf, 0, len, 0)
+    return createHash('sha256').update(buf).digest('hex').slice(0, 16)
+  } finally {
+    await handle.close()
+  }
+}
+
+async function getDbFingerprint(dbPath: string): Promise<DbFingerprint | null> {
   try {
     const s = await stat(dbPath)
-    return { mtimeMs: s.mtimeMs, size: s.size }
+    const headHash = await hashHead(dbPath, s.size)
+    return { mtimeMs: s.mtimeMs, size: s.size, headHash }
   } catch {
     return null
   }
@@ -41,7 +58,12 @@ export async function readCachedResults(dbPath: string): Promise<ParsedProviderC
     const raw = await readFile(getCachePath(), 'utf-8')
     const cache = JSON.parse(raw) as ResultCache
 
-    if (cache.version === CURSOR_CACHE_VERSION && cache.dbMtimeMs === fp.mtimeMs && cache.dbSizeBytes === fp.size) {
+    if (
+      cache.version === CURSOR_CACHE_VERSION
+      && cache.dbMtimeMs === fp.mtimeMs
+      && cache.dbSizeBytes === fp.size
+      && cache.dbHeadHash === fp.headHash
+    ) {
       return cache.calls
     }
     return null
@@ -60,6 +82,7 @@ export async function writeCachedResults(dbPath: string, calls: ParsedProviderCa
     version: CURSOR_CACHE_VERSION,
     dbMtimeMs: fp.mtimeMs,
     dbSizeBytes: fp.size,
+    dbHeadHash: fp.headHash,
     calls,
   }
 

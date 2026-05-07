@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process'
+import { resolve, sep } from 'path'
+import { homedir, tmpdir } from 'os'
 import { parseAllSessions } from './parser.js'
 import type { DateRange, SessionSummary } from './types.js'
 
@@ -22,15 +24,82 @@ export type YieldSummary = {
 
 const SAFE_REF_PATTERN = /^[A-Za-z0-9._/\-]+$/
 
-function runGit(args: string[], cwd: string): string | null {
+// Neutralize per-repo config keys that git happily executes as commands when
+// it discovers them in a `.git/config`. A malicious session JSONL can drop
+// `entry.cwd` pointing at a directory whose `.git/config` sets these keys —
+// without these `-c` overrides, `git` invocations below run attacker code.
+// (CVE-2022-24765 / CVE-2024-32002 family.)
+const SAFE_GIT_ARGS: readonly string[] = [
+  '-c', 'core.fsmonitor=',
+  '-c', 'core.sshCommand=',
+  '-c', 'core.pager=cat',
+  '-c', 'protocol.version=2',
+  '-c', 'safe.directory=*',
+]
+
+function safeGitEnv(): NodeJS.ProcessEnv {
+  // Strip every GIT_* variable from the inherited env, then add only the ones
+  // we want git to see. This defeats `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*`
+  // injection from the parent shell.
+  const env: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.startsWith('GIT_')) continue
+    env[k] = v
+  }
+  env.GIT_CONFIG_GLOBAL = '/dev/null'
+  env.GIT_CONFIG_SYSTEM = '/dev/null'
+  env.GIT_CONFIG_NOSYSTEM = '1'
+  env.GIT_OPTIONAL_LOCKS = '0'
+  env.GIT_TERMINAL_PROMPT = '0'
+  env.GIT_PAGER = 'cat'
+  return env
+}
+
+// Confine git invocations to user-writable roots ($HOME, $TMPDIR, plus any
+// CODEBURN_ALLOWED_PROJECT_ROOTS). `entry.cwd` from session JSONL is
+// otherwise an arbitrary-path primitive.
+function trustedRoots(): string[] {
+  const roots: string[] = [resolve(homedir()), resolve(tmpdir())]
+  const extra = process.env.CODEBURN_ALLOWED_PROJECT_ROOTS
+  if (extra) {
+    for (const r of extra.split(':')) {
+      if (r) roots.push(resolve(r))
+    }
+  }
+  return roots
+}
+
+function isCwdAllowed(dir: string): boolean {
+  let resolved: string
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+    resolved = resolve(dir)
+  } catch {
+    return false
+  }
+  for (const root of trustedRoots()) {
+    if (resolved === root || resolved.startsWith(root + sep)) return true
+  }
+  return false
+}
+
+function runGit(args: string[], cwd: string): string | null {
+  if (!isCwdAllowed(cwd)) return null
+  try {
+    return execFileSync('git', [...SAFE_GIT_ARGS, ...args], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: safeGitEnv(),
+      timeout: 10_000,
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim()
   } catch {
     return null
   }
 }
 
 function isGitRepo(dir: string): boolean {
+  if (!isCwdAllowed(dir)) return false
   return runGit(['rev-parse', '--is-inside-work-tree'], dir) === 'true'
 }
 
@@ -104,10 +173,6 @@ function getCommitsInRange(cwd: string, since: Date, until: Date, mainBranch: st
       sha,
       timestamp: new Date(timestamp),
       inMain: mainCommits.has(sha),
-      // wasReverted: matches when ANY later commit's body says
-      // "This reverts commit <sha>". Compare against the full SHA AND its
-      // 7-char short prefix to be safe; git revert sometimes records the
-      // short form.
       wasReverted: revertedShas.has(sha.toLowerCase()) ||
                    revertedShas.has(sha.toLowerCase().slice(0, 7)),
     }
@@ -124,7 +189,7 @@ function categorizeSession(
 
   const sessionStart = new Date(session.firstTimestamp)
   const lastTs = session.lastTimestamp ?? session.firstTimestamp
-  const sessionEnd = new Date(new Date(lastTs).getTime() + 60 * 60 * 1000) // +1 hour
+  const sessionEnd = new Date(new Date(lastTs).getTime() + 60 * 60 * 1000)
 
   const relevantCommits = commits.filter(c =>
     c.timestamp >= sessionStart && c.timestamp <= sessionEnd
@@ -135,9 +200,6 @@ function categorizeSession(
   }
 
   const inMainCount = relevantCommits.filter(c => c.inMain).length
-  // A session is "reverted" when at least half of its in-main commits were
-  // later reverted out (revert detected via "This reverts commit <sha>"
-  // anywhere later in history, not in the same time window).
   const revertedCount = relevantCommits.filter(c => c.inMain && c.wasReverted).length
 
   if (revertedCount > 0 && revertedCount >= inMainCount / 2) {
@@ -162,13 +224,11 @@ export async function computeYield(range: DateRange, cwd: string): Promise<Yield
     details: [],
   }
 
-  // Get all commits in the date range for correlation
   const commits = isGitRepo(cwd)
     ? getCommitsInRange(cwd, range.start, range.end, getMainBranch(cwd))
     : []
 
   for (const project of projects) {
-    // Try project-specific git repo first, fall back to cwd
     const projectCwd = project.projectPath && isGitRepo(project.projectPath)
       ? project.projectPath
       : cwd
@@ -215,4 +275,11 @@ export function formatYieldSummary(summary: YieldSummary): string {
   ]
 
   return lines.join('\n')
+}
+
+// Exported for tests only. Not part of the public API.
+export const __test__ = {
+  isCwdAllowed,
+  safeGitEnv,
+  SAFE_GIT_ARGS,
 }

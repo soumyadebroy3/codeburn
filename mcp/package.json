@@ -1,0 +1,19 @@
+{
+  "name": "@codeburn/mcp",
+  "version": "0.0.1",
+  "description": "MCP server exposing codeburn usage data to AI agents",
+  "type": "module",
+  "bin": {
+    "codeburn-mcp": "server.mjs"
+  },
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "private": true,
+  "files": [
+    "server.mjs",
+    "README.md"
+  ],
+  "license": "MIT"
+}

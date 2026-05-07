@@ -85,12 +85,23 @@ cat > "${BUNDLE}/Contents/PkgInfo" <<'PKG'
 APPL????
 PKG
 
-# Ad-hoc sign so macOS treats the bundle as internally consistent. This satisfies the
-# minimum bundle-validity checks on macOS 14+ and prevents a class of Gatekeeper edge
-# cases on managed Macs. A Developer ID signature (separate setup) would additionally
-# surface the publisher name in Finder; not required here.
-echo "▸ Ad-hoc signing..."
-codesign --force --sign - --timestamp=none --deep "${BUNDLE}" 2>/dev/null || true
+# Ad-hoc sign with Hardened Runtime so macOS enforces:
+#   - DYLD_INSERT_LIBRARIES injection blocked
+#   - Library validation (loaded dylibs must match our team identifier or Apple)
+#   - JIT/unsigned-memory/dyld-env all OFF unless explicitly opted in via entitlements
+#
+# Without a paid Developer ID we sign ad-hoc (`-`) which still applies the runtime
+# flags above; users will see the standard Gatekeeper "downloaded from internet"
+# warning on first launch (cleared by a one-time right-click → Open). Once a
+# Developer ID is available, replace `--sign -` with `--sign "Developer ID Application: ..."`
+# and add a `xcrun notarytool submit ... --wait` step plus `xcrun stapler staple`.
+ENTITLEMENTS="${MAC_DIR}/CodeBurnMenubar.entitlements"
+echo "▸ Signing with Hardened Runtime..."
+codesign --force --sign - \
+  --options=runtime \
+  --entitlements "${ENTITLEMENTS}" \
+  --timestamp=none \
+  --deep "${BUNDLE}" 2>/dev/null || true
 codesign --verify --deep --strict "${BUNDLE}" 2>/dev/null || echo "  (signature verify skipped)"
 
 ZIP_NAME="CodeBurnMenubar-${VERSION}.zip"

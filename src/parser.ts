@@ -98,10 +98,27 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
   if (!msg?.usage || !msg?.model) return null
 
   const usage = msg.usage
+  // Newer Anthropic responses break cache writes by TTL (1h vs 5m). When the
+  // breakdown is present, use it directly. When it isn't (older sessions),
+  // fall back to treating the legacy total as 5m so downstream pricing stays
+  // consistent with what codeburn used to do — same money, just attributed.
+  const cw1h = usage.cache_creation?.ephemeral_1h_input_tokens
+  const cw5m = usage.cache_creation?.ephemeral_5m_input_tokens
+  const cwTotalLegacy = usage.cache_creation_input_tokens ?? 0
+  const has1h = typeof cw1h === 'number'
+  const has5m = typeof cw5m === 'number'
+  const cacheCreation1h = has1h ? cw1h! : 0
+  const cacheCreation5m = has5m
+    ? cw5m!
+    : (has1h ? Math.max(0, cwTotalLegacy - (cw1h ?? 0)) : cwTotalLegacy)
+  const cacheCreationTotal = cacheCreation1h + cacheCreation5m
+
   const tokens: TokenUsage = {
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
-    cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheCreationInputTokens: cacheCreationTotal,
+    cacheCreationInputTokens1h: cacheCreation1h,
+    cacheCreationInputTokens5m: cacheCreation5m,
     cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
     cachedInputTokens: 0,
     reasoningTokens: 0,
@@ -114,10 +131,11 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     msg.model,
     tokens.inputTokens,
     tokens.outputTokens,
-    tokens.cacheCreationInputTokens,
+    cacheCreation5m,
     tokens.cacheReadInputTokens,
     tokens.webSearchRequests,
     usage.speed ?? 'standard',
+    cacheCreation1h,
   )
 
   const bashCmds = extractBashCommandsFromContent(msg.content ?? [])
@@ -511,6 +529,8 @@ function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
     inputTokens: call.inputTokens,
     outputTokens: call.outputTokens,
     cacheCreationInputTokens: call.cacheCreationInputTokens,
+    cacheCreationInputTokens1h: call.cacheCreationInputTokens1h,
+    cacheCreationInputTokens5m: call.cacheCreationInputTokens5m,
     cacheReadInputTokens: call.cacheReadInputTokens,
     cachedInputTokens: call.cachedInputTokens,
     reasoningTokens: call.reasoningTokens,

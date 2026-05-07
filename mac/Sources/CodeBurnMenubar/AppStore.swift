@@ -159,7 +159,7 @@ final class AppStore {
             lastError = nil
         } catch {
             if Task.isCancelled { return }
-            NSLog("CodeBurn: fetch failed for \(key.period.rawValue)/\(key.provider.rawValue): \(error)")
+            LogSanitizer.logSafe("fetch failed for \(key.period.rawValue)/\(key.provider.rawValue)", error)
             if includeOptimize, cache[key] == nil {
                 do {
                     let fallback = try await DataClient.fetch(period: key.period, provider: key.provider, includeOptimize: false)
@@ -170,7 +170,7 @@ final class AppStore {
                     return
                 } catch {
                     if Task.isCancelled { return }
-                    NSLog("CodeBurn: fallback fetch also failed: \(error)")
+                    LogSanitizer.logSafe("fallback fetch also failed", error)
                 }
             }
             lastError = String(describing: error)
@@ -195,7 +195,7 @@ final class AppStore {
             if cacheDate != cacheDateAtStart { return }
             cache[PayloadCacheKey(period: period, provider: .all)] = CachedPayload(payload: fresh, fetchedAt: Date())
         } catch {
-            NSLog("CodeBurn: quiet refresh failed for \(period.rawValue): \(error)")
+            LogSanitizer.logSafe("quiet refresh failed for \(period.rawValue)", error)
         }
     }
 
@@ -374,27 +374,10 @@ final class AppStore {
         }
     }
 
-    /// Strip control characters and any token-shaped substrings from server-error
-    /// strings before they land in NSLog or the UI. Anthropic / OpenAI error
-    /// envelopes don't typically echo tokens, but we also surface this in
-    /// unified-log paths readable by other local users via `log stream`.
+    /// Delegates to LogSanitizer so the redaction logic is shared with credential-store
+    /// NSLog sites and exercised by SecurityTests.
     private func sanitizeForUI(_ s: String?) -> String? {
-        guard let s, !s.isEmpty else { return nil }
-        var cleaned = s.replacingOccurrences(of: "\u{0000}", with: "")
-        // Token-shaped redaction. Apply to all known auth-token formats so
-        // an error body that quotes the request/response token is masked.
-        let patterns: [(pattern: String, replacement: String)] = [
-            (#"sk-ant-[A-Za-z0-9_-]+"#, "sk-ant-***"),
-            (#"sk-[A-Za-z0-9_-]{16,}"#, "sk-***"),
-            (#"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#, "eyJ***"),
-            (#"(?i)Bearer\s+\S+"#, "Bearer ***"),
-        ]
-        for entry in patterns {
-            cleaned = cleaned.replacingOccurrences(of: entry.pattern, with: entry.replacement, options: .regularExpression)
-        }
-        // Cap length so a runaway server body cannot fill stderr.
-        if cleaned.count > 240 { cleaned = String(cleaned.prefix(240)) + "…" }
-        return cleaned
+        LogSanitizer.sanitize(s)
     }
 
     /// Snapshot of live quota state for a given provider. Returns nil when the user

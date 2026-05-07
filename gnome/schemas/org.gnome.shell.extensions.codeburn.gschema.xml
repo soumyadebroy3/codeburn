@@ -64,5 +64,16 @@
       <description>Providers excluded from cost accounting and display</description>
     </key>
 
+    <key name="network" type="s">
+      <choices>
+        <choice value="off"/>
+        <choice value="fx-only"/>
+        <choice value="all"/>
+      </choices>
+      <default>'fx-only'</default>
+      <summary>Network access policy</summary>
+      <description>Controls outbound HTTP from the extension. off=no network at all; fx-only=only api.frankfurter.app for currency conversion; all=allow any documented outbound call.</description>
+    </key>
+
   </schema>
 </schemalist>

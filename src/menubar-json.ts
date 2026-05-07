@@ -45,8 +45,39 @@ export type DailyHistoryEntry = {
   topModels: DailyModelBreakdown[]
 }
 
+// Schema version for the JSON snapshot consumed by the macOS menubar app and
+// the GNOME shell extension. Bump in lockstep with breaking shape changes; the
+// menubar/extension SHOULD warn the user and refuse to consume a major-bumped
+// payload they can't decode. Minor (additive) shape changes can keep the same
+// version as long as old fields stay present.
+export const MENUBAR_SCHEMA_VERSION = 1
+
+/**
+ * Plan + leverage information surfaced when a subscription plan is configured.
+ * Lets the menubar / GNOME / HTML report show "$200 paid · $1,131 of API value
+ * · 5.7× leverage" instead of just "$1,131 spend" — which is misleading for
+ * subscription users (they pay flat, not per-token).
+ */
+export type ValuationBlock = {
+  /** Flat amount the user pays for this period (monthlyUsd from the configured plan). */
+  paidUSD: number
+  /** Sum of pay-as-you-go API rates × tokens for this period. The "spend" number we currently show. */
+  apiValueUSD: number
+  /** apiValueUSD / paidUSD. >= 1 means you're getting more than you pay for. */
+  leverage: number
+  /** Plan id (e.g. 'claude-max') and display name. Null when no plan is configured. */
+  plan: { id: string; displayName: string; monthlyUsd: number } | null
+}
+
 export type MenubarPayload = {
+  schemaVersion: typeof MENUBAR_SCHEMA_VERSION
   generated: string
+  /**
+   * Optional. Present when the user has set a plan via `codeburn plan set …`.
+   * Older menubar/GNOME builds ignore unknown fields, so this is additive
+   * within schema v1.
+   */
+  valuation?: ValuationBlock
   current: {
     label: string
     cost: number
@@ -155,14 +186,38 @@ function buildHistory(daily: DailyHistoryEntry[] | undefined): MenubarPayload['h
   return { daily: trimmed }
 }
 
+/**
+ * Compute the plan/leverage block. Returns undefined when no plan is set;
+ * the consumer then renders the legacy "spend" view.
+ */
+export function computeValuation(
+  apiValueUSD: number,
+  plan: { id: string; displayName: string; monthlyUsd: number } | null,
+): ValuationBlock | undefined {
+  if (!plan) return undefined
+  const paidUSD = plan.monthlyUsd
+  // Leverage is undefined when paid is 0 (nominally a "free" plan); use Infinity-clamp
+  // to a large finite value so JSON consumers don't blow up on `Infinity`.
+  const leverage = paidUSD > 0 ? apiValueUSD / paidUSD : 999
+  return {
+    paidUSD,
+    apiValueUSD,
+    leverage,
+    plan: { id: plan.id, displayName: plan.displayName, monthlyUsd: plan.monthlyUsd },
+  }
+}
+
 export function buildMenubarPayload(
   current: PeriodData,
   providers: ProviderCost[],
   optimize: OptimizeResult | null,
   dailyHistory?: DailyHistoryEntry[],
+  valuation?: ValuationBlock,
 ): MenubarPayload {
   return {
+    schemaVersion: MENUBAR_SCHEMA_VERSION,
     generated: new Date().toISOString(),
+    ...(valuation ? { valuation } : {}),
     current: {
       label: current.label,
       cost: current.cost,

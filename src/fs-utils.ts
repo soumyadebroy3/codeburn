@@ -1,5 +1,5 @@
-import { readFile, stat } from 'fs/promises'
-import { readFileSync, statSync, createReadStream } from 'fs'
+import { open as openAsync } from 'fs/promises'
+import { openSync, closeSync, fstatSync, readFileSync } from 'fs'
 import { createInterface } from 'readline'
 
 // Hard cap well below V8's 512 MB string limit even with split('\n') doubling.
@@ -19,86 +19,112 @@ function verbose(): boolean {
   return process.env.CODEBURN_VERBOSE === '1'
 }
 
-function warn(msg: string): void {
+export function warn(msg: string): void {
   if (verbose()) process.stderr.write(`codeburn: ${msg}\n`)
 }
 
-async function readViaStream(filePath: string): Promise<string> {
-  const chunks: string[] = []
-  const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-  for await (const line of rl) chunks.push(line)
-  return chunks.join('\n')
-}
-
+// Open + fstat + read on the SAME file descriptor closes the TOCTOU window
+// where stat() and the subsequent read could see different inodes (a swap
+// between a small regular file and a 2 GB FIFO, for example). The handle
+// guarantees we read exactly the file we sized.
 export async function readSessionFile(filePath: string): Promise<string | null> {
-  let size: number
+  let handle
   try {
-    size = (await stat(filePath)).size
+    handle = await openAsync(filePath, 'r')
   } catch (err) {
-    warn(`stat failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+    warn(`open failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
     return null
   }
-
-  if (size > MAX_SESSION_FILE_BYTES) {
-    warn(`skipped oversize file ${filePath} (${size} bytes > cap ${MAX_SESSION_FILE_BYTES})`)
-    return null
-  }
-
   try {
-    if (size >= STREAM_THRESHOLD_BYTES) return await readViaStream(filePath)
-    return await readFile(filePath, 'utf-8')
+    const s = await handle.stat()
+    if (s.size > MAX_SESSION_FILE_BYTES) {
+      warn(`skipped oversize file ${filePath} (${s.size} bytes > cap ${MAX_SESSION_FILE_BYTES})`)
+      return null
+    }
+    if (s.size >= STREAM_THRESHOLD_BYTES) {
+      // Use the FileHandle's own createReadStream so fd ownership is clean
+      // (no double-close on GC). The stream takes ownership and the handle
+      // is closed by the stream when it ends.
+      const stream = handle.createReadStream({ encoding: 'utf-8' })
+      handle = undefined // ownership transferred
+      const chunks: string[] = []
+      const rl = createInterface({ input: stream, crlfDelay: Infinity })
+      try {
+        for await (const line of rl) chunks.push(line)
+      } finally {
+        stream.destroy()
+      }
+      return chunks.join('\n')
+    }
+    const buf = await handle.readFile()
+    return buf.toString('utf-8')
   } catch (err) {
     warn(`read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
     return null
+  } finally {
+    if (handle) {
+      try { await handle.close() } catch { /* ignore */ }
+    }
   }
 }
 
 export function readSessionFileSync(filePath: string): string | null {
-  let size: number
+  let fd: number
   try {
-    size = statSync(filePath).size
+    fd = openSync(filePath, 'r')
   } catch (err) {
-    warn(`stat failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+    warn(`open failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
     return null
   }
-
-  if (size > MAX_SESSION_FILE_BYTES) {
-    warn(`skipped oversize file ${filePath} (${size} bytes > cap ${MAX_SESSION_FILE_BYTES})`)
-    return null
-  }
-
   try {
-    return readFileSync(filePath, 'utf-8')
+    const size = fstatSync(fd).size
+    if (size > MAX_SESSION_FILE_BYTES) {
+      warn(`skipped oversize file ${filePath} (${size} bytes > cap ${MAX_SESSION_FILE_BYTES})`)
+      return null
+    }
+    return readFileSync(fd, 'utf-8')
   } catch (err) {
     warn(`read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
     return null
+  } finally {
+    try { closeSync(fd) } catch { /* ignore */ }
   }
 }
 
 export async function* readSessionLines(filePath: string): AsyncGenerator<string> {
-  let size: number
+  let handle
   try {
-    size = (await stat(filePath)).size
+    handle = await openAsync(filePath, 'r')
+  } catch (err) {
+    warn(`open failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+    return
+  }
+  try {
+    const s = await handle.stat()
+    if (s.size > MAX_STREAM_SESSION_FILE_BYTES) {
+      warn(`skipped oversize file ${filePath} (${s.size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`)
+      return
+    }
+    const stream = handle.createReadStream({ encoding: 'utf-8' })
+    const ownedHandle = handle
+    handle = undefined // stream now owns the fd
+    const rl = createInterface({ input: stream, crlfDelay: Infinity })
+    try {
+      for await (const line of rl) yield line
+    } catch (err) {
+      warn(`stream read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+    } finally {
+      stream.destroy()
+      // createReadStream({autoClose:true}) closes the fd when stream ends/errors,
+      // but if the consumer abandons the generator early the FileHandle's GC
+      // close is what runs. Explicitly close here to avoid the deprecation.
+      try { await ownedHandle.close() } catch { /* fd may already be closed by stream */ }
+    }
   } catch (err) {
     warn(`stat failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
-    return
-  }
-
-  if (size > MAX_STREAM_SESSION_FILE_BYTES) {
-    warn(
-      `skipped oversize file ${filePath} (${size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`,
-    )
-    return
-  }
-
-  const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-  try {
-    for await (const line of rl) yield line
-  } catch (err) {
-    warn(`stream read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
   } finally {
-    stream.destroy()
+    if (handle) {
+      try { await handle.close() } catch { /* ignore */ }
+    }
   }
 }

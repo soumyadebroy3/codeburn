@@ -1,7 +1,26 @@
 export type TokenUsage = {
   inputTokens: number
   outputTokens: number
+  /**
+   * Total cache-creation input tokens. Equal to
+   * `cacheCreationInputTokens1h + cacheCreationInputTokens5m` when both
+   * fields are present; older session JSONLs that don't break it down put
+   * everything here. Kept for backward compatibility with downstream code
+   * that doesn't care about cache duration.
+   */
   cacheCreationInputTokens: number
+  /**
+   * 1-hour ephemeral cache writes. Anthropic charges 2× the base input rate
+   * for these. Defaults to 0 when the breakdown isn't available — in that
+   * case the legacy total is treated as 5-minute cache for pricing.
+   */
+  cacheCreationInputTokens1h?: number
+  /**
+   * 5-minute ephemeral cache writes. Anthropic charges 1.25× the base input
+   * rate. When the breakdown isn't available, the legacy total is treated
+   * as 5m for pricing.
+   */
+  cacheCreationInputTokens5m?: number
   cacheReadInputTokens: number
   cachedInputTokens: number
   reasoningTokens: number
@@ -25,6 +44,16 @@ export type ApiUsage = {
   input_tokens: number
   output_tokens: number
   cache_creation_input_tokens?: number
+  /**
+   * Newer Anthropic responses break cache_creation down by TTL. We use
+   * these fields when present to apply the correct multiplier (2× for 1h,
+   * 1.25× for 5m). Falls back to cache_creation_input_tokens (treated as
+   * 5m) when missing.
+   */
+  cache_creation?: {
+    ephemeral_1h_input_tokens?: number
+    ephemeral_5m_input_tokens?: number
+  }
   cache_read_input_tokens?: number
   server_tool_use?: {
     web_search_requests?: number

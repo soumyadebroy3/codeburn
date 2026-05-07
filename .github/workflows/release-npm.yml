@@ -1,0 +1,71 @@
+name: Release npm
+
+# Triggered by pushing a `v*` tag. Builds, tests, publishes to npm with sigstore
+# provenance, and uploads a CycloneDX SBOM as a release asset. Requires the
+# `NPM_TOKEN` repo secret (an npm "Automation" token) and the repo to be
+# enabled for OIDC publishing.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re-)publish, e.g. v0.9.7'
+        required: true
+
+permissions:
+  contents: write   # upload assets to the GitHub Release
+  id-token: write   # required by `npm publish --provenance`
+
+concurrency:
+  group: release-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install (clean)
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test --silent
+
+      - name: Build (with pinned LiteLLM bundle)
+        # No CODEBURN_DEV — bundle-litellm.mjs enforces the SHA pin in
+        # scripts/litellm-pin.json. Build fails if the upstream SHA doesn't match.
+        run: npm run build
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          npm install --no-save @cyclonedx/cyclonedx-npm
+          npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file codeburn-sbom.cdx.json
+          echo "SBOM bytes: $(wc -c < codeburn-sbom.cdx.json)"
+
+      - name: Publish to npm with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Attach SBOM to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: codeburn-sbom.cdx.json
+          fail_on_unmatched_files: false

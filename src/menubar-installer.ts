@@ -167,11 +167,19 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     console.log(`Downloading ${zip.name}...`)
     await downloadToFile(zip.browser_download_url, archivePath)
 
-    if (checksum) {
+    if (!checksum) {
+      throw new Error(
+        `Release ${zip.name} does not publish a SHA-256 checksum file. ` +
+        `Refusing to install an unverified binary. ` +
+        `Re-run after the release is republished with a .sha256 sidecar, or ` +
+        `set CODEBURN_INSECURE_INSTALL=1 if you absolutely must skip verification.`,
+      )
+    }
+    if (process.env.CODEBURN_INSECURE_INSTALL === '1') {
+      console.log('Warning: skipping checksum verification because CODEBURN_INSECURE_INSTALL=1.')
+    } else {
       console.log('Verifying checksum...')
       await verifyChecksum(archivePath, checksum.browser_download_url)
-    } else {
-      console.log('Warning: no checksum file found in release, skipping verification.')
     }
 
     console.log('Unpacking...')

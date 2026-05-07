@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import https from 'https'
 
 import { calculateCost } from '../models.js'
+import { warn } from '../fs-utils.js'
 import type { Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
 
 const CONVERSATIONS_DIR = join(homedir(), '.gemini', 'antigravity', 'conversations')
@@ -59,8 +60,29 @@ let memCache: AntigravityCache | null = null
 let cacheDirty = false
 let httpsAgent: https.Agent | undefined
 
+// Antigravity's local language server uses a self-signed certificate on
+// 127.0.0.1, so cert verification has to be disabled. We hard-pin the agent
+// to the loopback address and refuse to attach it to any other host so a
+// future code change cannot accidentally reuse this agent for an outbound
+// request and create an MITM hole.
+class LoopbackOnlyAgent extends https.Agent {
+  constructor() {
+    super({ rejectUnauthorized: false })
+  }
+  // Node calls createConnection with the resolved host; throw if it isn't
+  // loopback.
+  createConnection(options: { host?: string; hostname?: string }, ...rest: unknown[]): ReturnType<https.Agent['createConnection']> {
+    const host = options.host ?? options.hostname ?? ''
+    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+      throw new Error(`antigravity agent refused non-loopback host: ${host}`)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (https.Agent.prototype as any).createConnection.call(this, options, ...rest)
+  }
+}
+
 function getAgent(): https.Agent {
-  if (!httpsAgent) httpsAgent = new https.Agent({ rejectUnauthorized: false })
+  if (!httpsAgent) httpsAgent = new LoopbackOnlyAgent()
   return httpsAgent
 }
 
@@ -81,7 +103,12 @@ async function loadCache(): Promise<AntigravityCache> {
       memCache = cache
       return cache
     }
-  } catch { /* no cache or invalid */ }
+  } catch (err) {
+    // CODEBURN_VERBOSE=1 surfaces "why is the antigravity cache being rebuilt
+    // every run" — a corrupt JSON or version bump would otherwise look like a
+    // performance regression.
+    warn(`antigravity cache load failed: ${(err as Error).message ?? 'unknown'}`)
+  }
   memCache = { version: CACHE_VERSION, cascades: {} }
   return memCache
 }

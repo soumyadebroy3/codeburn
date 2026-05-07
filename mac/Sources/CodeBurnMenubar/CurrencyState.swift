@@ -176,6 +176,24 @@ enum CLICurrencyConfig {
         return code.uppercased()
     }
 
+    /// Read the network policy mirror. Returned values match the CLI's
+    /// NetworkPolicy union ('off' / 'fx-only' / 'all'). UpdateChecker reads
+    /// this and skips its outbound GitHub call when 'off'.
+    static func loadNetworkPolicy() -> String {
+        guard
+            let data = try? SafeFile.read(from: configPath),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let value = json["network"] as? String
+        else {
+            return "all"
+        }
+        let normalized = value.lowercased()
+        if normalized == "off" || normalized == "fx-only" || normalized == "all" {
+            return normalized
+        }
+        return "all"
+    }
+
     static func persist(code: String) {
         do {
             try SafeFile.withExclusiveLock(at: lockPath) {

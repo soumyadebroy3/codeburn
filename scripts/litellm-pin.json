@@ -1,0 +1,16 @@
+{
+  "$comment": [
+    "Pin for the upstream LiteLLM model_prices_and_context_window.json that scripts/bundle-litellm.mjs fetches at build time.",
+    "Bumping this is a deliberate, reviewable PR. The build refuses to run if the response SHA-256 doesn't match `expectedSha256`.",
+    "How to update:",
+    "  1. Pick a commit on https://github.com/BerriAI/litellm/commits/main",
+    "  2. Set `commitSha` below to the full 40-char SHA",
+    "  3. Run `node scripts/bundle-litellm.mjs --print-sha` to compute the new file's SHA-256",
+    "  4. Paste it into `expectedSha256`",
+    "  5. Run `npm run build` and inspect the diff in src/data/litellm-snapshot.json"
+  ],
+  "commitSha": "main",
+  "expectedSha256": null,
+  "minEntries": 200,
+  "maxEntries": 50000
+}

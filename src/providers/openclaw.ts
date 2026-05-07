@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename, join, resolve, sep } from 'path'
 import { homedir } from 'os'
 
 import { readSessionFile } from '../fs-utils.js'
@@ -224,13 +224,23 @@ async function discoverInDir(agentsDir: string): Promise<SessionSource[]> {
     } catch { /* no index, fall back to directory scan */ }
 
     const seenFiles = new Set<string>()
+    const sessionsRoot = resolve(sessionsDir) + sep
 
     for (const entry of Object.values(indexData)) {
       if (entry.sessionFile) {
-        seenFiles.add(entry.sessionFile)
-        sources.push({ path: entry.sessionFile, project: agent, provider: 'openclaw' })
+        // Path traversal guard: sessions.json is JSON written by the OpenClaw
+        // process. A malicious or corrupt index could point sessionFile at
+        // /etc/passwd, a FIFO, or a symlink target outside the sessions dir.
+        // Resolve and require it to live under sessionsDir.
+        const resolved = resolve(entry.sessionFile)
+        if (resolved !== resolve(sessionsDir) && !resolved.startsWith(sessionsRoot)) continue
+        seenFiles.add(resolved)
+        sources.push({ path: resolved, project: agent, provider: 'openclaw' })
       } else if (entry.sessionId) {
-        const filePath = join(sessionsDir, `${entry.sessionId}.jsonl`)
+        // sessionId is also untrusted; basename() it to defeat ../ traversal.
+        const safeId = basename(entry.sessionId)
+        if (!safeId || safeId !== entry.sessionId) continue
+        const filePath = join(sessionsDir, `${safeId}.jsonl`)
         seenFiles.add(filePath)
         sources.push({ path: filePath, project: agent, provider: 'openclaw' })
       }

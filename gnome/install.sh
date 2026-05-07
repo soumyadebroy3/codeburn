@@ -7,10 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Installing CodeBurn GNOME extension..."
 
-# Compile GSettings schema
-echo "Compiling schemas..."
-glib-compile-schemas "${SCRIPT_DIR}/schemas/"
-
 # Create install directory
 mkdir -p "${INSTALL_DIR}"
 
@@ -24,7 +20,12 @@ cp "${SCRIPT_DIR}/stylesheet.css" "${INSTALL_DIR}/"
 
 # Copy schemas
 mkdir -p "${INSTALL_DIR}/schemas"
-cp "${SCRIPT_DIR}/schemas/"* "${INSTALL_DIR}/schemas/"
+cp "${SCRIPT_DIR}/schemas/"*.xml "${INSTALL_DIR}/schemas/"
+
+# Compile schemas in the install directory (not the source tree). Compiling
+# in the source tree leaves a `gschemas.compiled` file dirtying the repo.
+echo "Compiling schemas..."
+glib-compile-schemas "${INSTALL_DIR}/schemas/"
 
 # Copy icons
 mkdir -p "${INSTALL_DIR}/icons"

@@ -11,12 +11,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version label for the bundle (e.g. v0.8.0 or dev-preview)'
+        description: 'Version label for the bundle (e.g. v0.8.0 or dev-preview). Letters, digits, dot, dash, underscore only.'
         required: true
         default: 'dev-preview'
 
 permissions:
   contents: write  # Needed to create the release + upload assets.
+
+concurrency:
+  # Allow at most one release per ref; do NOT cancel in-progress builds on
+  # the same tag — a half-finished signing run that gets cancelled tends to
+  # leave the codesign daemon in a wedged state on macos-latest.
+  group: release-menubar-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -24,15 +31,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve version label
         id: version
         run: |
+          set -euo pipefail
           if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then
-            echo "value=${GITHUB_REF#refs/tags/mac-}" >> "$GITHUB_OUTPUT"
+            VALUE="${GITHUB_REF#refs/tags/mac-}"
           else
-            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            VALUE="${{ github.event.inputs.version }}"
           fi
+          # Validate the label so downstream shell interpolation is safe.
+          if ! [[ "$VALUE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::Invalid version label: $VALUE"
+            exit 1
+          fi
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
 
       - name: Show Swift toolchain
         run: swift --version

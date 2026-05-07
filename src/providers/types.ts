@@ -13,7 +13,12 @@ export type ParsedProviderCall = {
   model: string
   inputTokens: number
   outputTokens: number
+  /** Total cache writes (1h + 5m). Kept for backward compat. */
   cacheCreationInputTokens: number
+  /** 1-hour cache writes. Priced at 2× input. Optional — older parsers omit. */
+  cacheCreationInputTokens1h?: number
+  /** 5-minute cache writes. Priced at 1.25× input. Optional — older parsers omit. */
+  cacheCreationInputTokens5m?: number
   cacheReadInputTokens: number
   cachedInputTokens: number
   reasoningTokens: number

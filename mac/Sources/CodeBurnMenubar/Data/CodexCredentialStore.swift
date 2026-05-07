@@ -280,7 +280,7 @@ enum CodexCredentialStore {
         do {
             try writeOurCache(record: updated)
         } catch {
-            NSLog("CodeBurn: codex cache write failed during refresh rotation: %@", String(describing: error))
+            LogSanitizer.logSafe("Codex cache write failed during refresh rotation", error)
         }
         return updated
     }

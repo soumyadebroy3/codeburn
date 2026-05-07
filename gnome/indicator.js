@@ -64,12 +64,27 @@ const CURRENCIES = [
   { code: 'CNY', symbol: '¥' },
 ];
 
+// Match prefs.js::PROVIDERS exactly. Adding a provider here AND in prefs.js is
+// required for the agent tab strip to surface it; missing one silently hides
+// the provider even when the CLI reports data for it.
 const PROVIDER_PATHS = {
   claude: '.claude/projects',
   codex: '.codex/sessions',
   cursor: '.config/Cursor/User/globalStorage/state.vscdb',
+  'cursor-agent': '.cursor/projects',
   copilot: '.copilot/session-state',
+  gemini: '.gemini/tmp',
+  antigravity: '.gemini/antigravity/conversations',
+  kiro: '.config/Kiro/User/globalStorage/kiro.kiroagent',
+  opencode: '.local/share/opencode',
+  goose: '.local/share/goose/sessions/sessions.db',
+  'roo-code': '.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks',
+  'kilo-code': '.config/Code/User/globalStorage/kilocode.kilo-code/tasks',
+  qwen: '.qwen/projects',
   pi: '.pi/agent/sessions',
+  omp: '.omp/agent/sessions',
+  droid: '.factory/projects',
+  openclaw: '.openclaw/agents',
 };
 
 function formatCost(value, currency, rate = 1, exact = false) {
@@ -871,8 +886,15 @@ class CodeBurnIndicator extends PanelMenu.Button {
       if (this._payload) this._render(this._payload);
       return;
     }
+    // Honour the `network` setting: 'off' → never call out, 'fx-only' / 'all'
+    // → fetch FX rates. The default is 'fx-only' so the previous behaviour is
+    // preserved for users who don't change the setting. Add a 5s timeout so
+    // a hanging Frankfurter doesn't leave the popover wedged.
+    const network = (this._settings?.get_string('network') || 'fx-only').toLowerCase();
+    if (network === 'off') return;
     const url = `https://api.frankfurter.app/latest?from=USD&to=${code}`;
     const msg = Soup.Message.new('GET', url);
+    if (this._soupSession.set_timeout) this._soupSession.set_timeout(5);
     this._soupSession.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, result) => {
       if (this._destroyed) return;
       try {

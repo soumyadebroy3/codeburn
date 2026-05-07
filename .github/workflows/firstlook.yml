@@ -9,6 +9,9 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   assess:
     runs-on: ubuntu-latest
@@ -16,7 +19,10 @@ jobs:
       pull-requests: write
       contents: read
     steps:
-      - uses: getagentseal/firstlook@main
+      # Pin firstlook to a tag rather than @main so a compromise of the action
+      # repo cannot retroactively rewrite our CI behaviour. Bump the tag in a
+      # reviewable PR.
+      - uses: getagentseal/firstlook@v1
         with:
           pr-number: ${{ inputs.pr-number }}
           skip-users: 'dependabot[bot],renovate[bot]'

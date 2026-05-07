@@ -28,7 +28,15 @@ function localDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-export function renderStatusBar(projects: ProjectSummary[]): string {
+/**
+ * One-line status output. When `plan` is supplied, the second line shows the
+ * plan/leverage context so users on flat subscriptions don't misread the
+ * month "spend" number as a bill.
+ */
+export function renderStatusBar(
+  projects: ProjectSummary[],
+  plan?: { displayName: string; monthlyUsd: number } | null,
+): string {
   const now = new Date()
   const today = localDateString(now)
   const monthStart = `${today.slice(0, 7)}-01`
@@ -56,7 +64,19 @@ export function renderStatusBar(projects: ProjectSummary[]): string {
   }
 
   const lines: string[] = ['']
-  lines.push(`  ${chalk.bold('Today')}  ${chalk.yellowBright(formatCost(todayCost))}  ${chalk.dim(`${todayCalls} calls`)}    ${chalk.bold('Month')}  ${chalk.yellowBright(formatCost(monthCost))}  ${chalk.dim(`${monthCalls} calls`)}`)
+  // When a plan is set, the headline says "API value" instead of bare cost
+  // because the user pays the flat plan price, not the metered total.
+  const monthLabel = plan ? 'Month value' : 'Month'
+  const todayLabel = plan ? 'Today value' : 'Today'
+  lines.push(`  ${chalk.bold(todayLabel)}  ${chalk.yellowBright(formatCost(todayCost))}  ${chalk.dim(`${todayCalls} calls`)}    ${chalk.bold(monthLabel)}  ${chalk.yellowBright(formatCost(monthCost))}  ${chalk.dim(`${monthCalls} calls`)}`)
+  if (plan && plan.monthlyUsd > 0) {
+    const leverage = monthCost / plan.monthlyUsd
+    const arrow = leverage >= 1 ? '✓' : '⚠'
+    const verdict = leverage >= 1
+      ? `${chalk.greenBright(`${leverage.toFixed(1)}× leverage`)} ${chalk.dim('on your')} ${chalk.bold(`$${plan.monthlyUsd}`)} ${chalk.dim(`${plan.displayName} flat`)}`
+      : `${chalk.yellowBright(`${leverage.toFixed(1)}×`)} ${chalk.dim(`— underutilizing your $${plan.monthlyUsd} ${plan.displayName} plan`)}`
+    lines.push(`  ${chalk.dim(arrow)} ${verdict}`)
+  }
   lines.push('')
 
   return lines.join('\n')

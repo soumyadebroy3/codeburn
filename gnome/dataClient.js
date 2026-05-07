@@ -64,9 +64,20 @@ export class DataClient {
   }
 
   _buildArgv(period, provider) {
+    // The setting is either a single absolute path (`/opt/my dir/codeburn`)
+    // or a tokenized command (`codeburn --foo`). Splitting unconditionally on
+    // space breaks paths-with-spaces. We split only when the value has no
+    // shell-meta and the FIRST token is a bare program name (no slash) — a
+    // path-shaped value goes through verbatim as a single argv entry.
     let base;
-    if (this._codeburnPath && SAFE_ARG_RE.test(this._codeburnPath)) {
-      base = this._codeburnPath.split(' ').filter(s => s.length > 0);
+    const raw = (this._codeburnPath || '').trim();
+    if (raw && SAFE_ARG_RE.test(raw)) {
+      const looksLikePath = raw.startsWith('/') || raw.startsWith('~');
+      if (looksLikePath) {
+        base = [raw]; // path with literal spaces stays a single argv token
+      } else {
+        base = raw.split(' ').filter(s => s.length > 0);
+      }
     } else {
       base = ['codeburn'];
     }

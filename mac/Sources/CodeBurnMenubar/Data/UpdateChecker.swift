@@ -33,10 +33,17 @@ final class UpdateChecker {
             latestVersion = UserDefaults.standard.string(forKey: cachedVersionKey)
             return
         }
+        // Honour ~/.config/codeburn/config.json's `network` field. 'off'
+        // disables the GitHub probe entirely; 'fx-only' also skips it (only
+        // currency conversion calls survive).
+        let policy = CLICurrencyConfig.loadNetworkPolicy()
+        if policy != "all" { return }
         await check()
     }
 
     func check() async {
+        let policy = CLICurrencyConfig.loadNetworkPolicy()
+        if policy != "all" { return }
         guard let url = URL(string: releasesAPI) else { return }
         var request = URLRequest(url: url)
         request.setValue("codeburn-menubar-updater", forHTTPHeaderField: "User-Agent")

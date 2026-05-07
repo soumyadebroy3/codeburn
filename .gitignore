@@ -40,3 +40,5 @@ assets/discord-*.png
 
 # Desktop app experiments
 desktop/
+# Added by code-review-graph
+.code-review-graph/

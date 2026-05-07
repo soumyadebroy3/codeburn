@@ -1,8 +1,8 @@
 import chalk from 'chalk'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, statSync } from 'fs'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { basename, join, resolve, sep } from 'path'
+import { homedir, tmpdir } from 'os'
 
 import { readSessionLines, readSessionFileSync } from './fs-utils.js'
 import { discoverAllSessions } from './providers/index.js'
@@ -379,6 +379,40 @@ function isReadTool(name: string): boolean {
 
 type McpConfigEntry = { normalized: string; original: string; mtime: number }
 
+// Confine MCP-config probe paths to the user's home tree (or a configured
+// trusted root). `cwd` values come from session JSONL files and are otherwise
+// an arbitrary-path read primitive. CODEBURN_ALLOWED_PROJECT_ROOTS is a
+// colon-separated allow-list used by tests and unusual deployments where
+// projects live outside $HOME (e.g. /Volumes/Code on macOS).
+function trustedRoots(): string[] {
+  // Both $HOME and $TMPDIR are user-writable, so allowing them does not let
+  // a hostile session JSONL exfiltrate paths the attacker doesn't already
+  // control. /etc, /private, /System, /Library, /var (outside /var/folders),
+  // /usr — anything that requires elevated rights to write — is implicitly
+  // out of scope.
+  const roots: string[] = [resolve(homedir()), resolve(tmpdir())]
+  const extra = process.env.CODEBURN_ALLOWED_PROJECT_ROOTS
+  if (extra) {
+    for (const r of extra.split(':')) {
+      if (r) roots.push(resolve(r))
+    }
+  }
+  return roots
+}
+
+function isCwdHomeRooted(cwd: string): boolean {
+  let resolvedCwd: string
+  try {
+    resolvedCwd = resolve(cwd)
+  } catch {
+    return false
+  }
+  for (const root of trustedRoots()) {
+    if (resolvedCwd === root || resolvedCwd.startsWith(root + sep)) return true
+  }
+  return false
+}
+
 export function loadMcpConfigs(projectCwds: Iterable<string>): Map<string, McpConfigEntry> {
   const servers = new Map<string, McpConfigEntry>()
   const configPaths = [
@@ -386,6 +420,7 @@ export function loadMcpConfigs(projectCwds: Iterable<string>): Map<string, McpCo
     join(homedir(), '.claude', 'settings.local.json'),
   ]
   for (const cwd of projectCwds) {
+    if (!isCwdHomeRooted(cwd)) continue
     configPaths.push(join(cwd, '.mcp.json'))
     configPaths.push(join(cwd, '.claude', 'settings.json'))
     configPaths.push(join(cwd, '.claude', 'settings.local.json'))

@@ -3,8 +3,14 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { randomBytes } from 'crypto'
 
-export type PlanId = 'claude-pro' | 'claude-max' | 'claude-max-5x' | 'cursor-pro' | 'custom' | 'none'
-export type PlanProvider = 'claude' | 'codex' | 'cursor' | 'all'
+export type PlanId =
+  | 'claude-pro' | 'claude-max' | 'claude-max-5x'
+  | 'codex-plus' | 'codex-pro'
+  | 'cursor-pro' | 'cursor-business'
+  | 'copilot-pro' | 'copilot-business' | 'copilot-enterprise'
+  | 'kiro-pro' | 'antigravity-pro'
+  | 'custom' | 'none'
+export type PlanProvider = 'claude' | 'codex' | 'cursor' | 'copilot' | 'kiro' | 'antigravity' | 'all'
 
 export type Plan = {
   id: PlanId
@@ -12,15 +18,65 @@ export type Plan = {
   provider: PlanProvider
   resetDay?: number
   setAt: string
+  /**
+   * True when the plan was auto-detected from a credentials file (Claude OAuth
+   * subscription type, etc.). Lets the CLI distinguish "user explicitly set
+   * this" from "we guessed this" — the latter gets a softer banner that says
+   * `(detected; codeburn plan to override)`.
+   */
+  autoDetected?: boolean
 }
+
+/**
+ * Network access policy. Honored by the CLI's update-check and any provider
+ * that may otherwise make outbound calls.
+ *   - 'off':     no outbound network at all
+ *   - 'fx-only': only currency conversion fetches (api.frankfurter.app)
+ *   - 'all':     update checks + FX + future telemetry (default)
+ *
+ * The macOS menubar reads this same config via CLICurrencyConfig and the
+ * GNOME extension mirrors it through gschema's `network` key.
+ */
+export type NetworkPolicy = 'off' | 'fx-only' | 'all'
 
 export type CodeburnConfig = {
   currency?: {
     code: string
     symbol?: string
   }
+  /**
+   * Legacy single-plan field, kept for backward compatibility with installs
+   * that ran `codeburn plan set <id>` before multi-provider plans landed.
+   * When `plans` is present, the legacy field is mirrored into `plans[claude]`
+   * (or whichever provider it's tagged for) and ignored.
+   */
   plan?: Plan
+  /**
+   * Per-provider plan map. A user with both a Claude Max and Cursor Pro
+   * subscription has two entries here; aggregate leverage is sum-paid vs
+   * sum-API-value across all entries.
+   */
+  plans?: Record<string, Plan>
   modelAliases?: Record<string, string>
+  network?: NetworkPolicy
+  /**
+   * Plan auto-detection state. Set to `false` after the user explicitly
+   * overrides — auto-detection then never re-imports for that provider.
+   * Set to a timestamp when detection runs so we don't re-probe every call.
+   */
+  planAutoDetectAt?: string
+}
+
+/**
+ * Read the effective network policy. Defaults to 'all' for backward
+ * compatibility. Set via `codeburn config set network=off` (future) or
+ * by editing ~/.config/codeburn/config.json directly.
+ */
+export async function getNetworkPolicy(): Promise<NetworkPolicy> {
+  const config = await readConfig()
+  const v = config.network
+  if (v === 'off' || v === 'fx-only' || v === 'all') return v
+  return 'all'
 }
 
 function getConfigDir(): string {
@@ -57,15 +113,50 @@ export async function readPlan(): Promise<Plan | undefined> {
   return config.plan
 }
 
+/**
+ * Returns every plan the user has configured, keyed by provider. Merges the
+ * legacy single-plan field into the result so older installs keep working.
+ */
+export async function readAllPlans(): Promise<Record<string, Plan>> {
+  const config = await readConfig()
+  const merged: Record<string, Plan> = { ...(config.plans ?? {}) }
+  if (config.plan && !merged[config.plan.provider]) {
+    merged[config.plan.provider] = config.plan
+  }
+  return merged
+}
+
 export async function savePlan(plan: Plan): Promise<void> {
   const config = await readConfig()
+  // Mirror to both legacy `plan` (last-set wins) and per-provider `plans`
+  // map. New code should read `plans`; legacy code that still reads `plan`
+  // continues to work.
   config.plan = plan
+  config.plans = { ...(config.plans ?? {}), [plan.provider]: plan }
+  await saveConfig(config)
+}
+
+export async function savePlans(plans: Record<string, Plan>): Promise<void> {
+  const config = await readConfig()
+  config.plans = plans
+  // Refresh the legacy field to whichever plan was most recently saved so
+  // older readers see a sane value.
+  const newest = Object.values(plans).sort((a, b) => (b.setAt ?? '').localeCompare(a.setAt ?? ''))[0]
+  if (newest) config.plan = newest
+  else delete config.plan
   await saveConfig(config)
 }
 
 export async function clearPlan(): Promise<void> {
   const config = await readConfig()
   delete config.plan
+  delete config.plans
+  await saveConfig(config)
+}
+
+export async function recordAutoDetectRun(): Promise<void> {
+  const config = await readConfig()
+  config.planAutoDetectAt = new Date().toISOString()
   await saveConfig(config)
 }
 

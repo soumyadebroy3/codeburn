@@ -6,7 +6,7 @@ import { parseAllSessions, filterProjectsByName } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { type PeriodData, type ProviderCost } from './menubar-json.js'
-import { buildMenubarPayload } from './menubar-json.js'
+import { buildMenubarPayload, computeValuation } from './menubar-json.js'
 import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateString } from './daily-cache.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
@@ -16,7 +16,8 @@ import { formatDateRangeLabel, parseDateRangeFlags, getDateRange, toPeriod, type
 import { runOptimize, scanAndDetect } from './optimize.js'
 import { renderCompare } from './compare.js'
 import { getAllProviders } from './providers/index.js'
-import { clearPlan, readConfig, readPlan, saveConfig, savePlan, getConfigFilePath, type PlanId } from './config.js'
+import { clearPlan, readConfig, readPlan, readAllPlans, saveConfig, savePlan, recordAutoDetectRun, getConfigFilePath, type Plan, type PlanId } from './config.js'
+import { detectPlans, presenceHintLines, type DetectionResult } from './plan-detect.js'
 import { clampResetDay, getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { getPresetPlan, isPlanId, isPlanProvider, planDisplayName } from './plans.js'
 import { createRequire } from 'node:module'
@@ -24,6 +25,47 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { version } = require('../package.json')
 import { loadCurrency, getCurrency, isValidCurrencyCode } from './currency.js'
+
+/**
+ * One-shot, idempotent plan auto-detection.
+ *
+ * Scans local credential files (Claude only today — see plan-detect.ts) and
+ * persists any high-confidence detection. After running once we record a
+ * timestamp in config so subsequent CLI invocations skip the I/O. The user
+ * can override at any time with `codeburn plan set …`; explicit user plans
+ * are never clobbered (see savePlan: per-provider keys, not whole-config
+ * replacement).
+ *
+ * Returns the latest DetectionResult so callers can show hint cards for
+ * presence-only providers.
+ */
+async function autoDetectAndPersist(force = false): Promise<DetectionResult> {
+  const config = await readConfig()
+  const existing = await readAllPlans()
+
+  // Cooldown only applies when at least one plan is already known. Without
+  // any plan, every CLI invocation re-probes — the user is in the "I just
+  // installed codeburn" state and we want detection to fire as soon as it
+  // can (e.g. they granted Keychain access between two runs).
+  const lastRunIso = config.planAutoDetectAt
+  const lastRun = lastRunIso ? Date.parse(lastRunIso) : 0
+  const now = Date.now()
+  const fresh = lastRun > 0 && now - lastRun < 24 * 60 * 60 * 1000
+  if (!force && fresh && Object.keys(existing).length > 0) {
+    return { detected: [], presenceOnly: [] }
+  }
+
+  const result = await detectPlans(existing)
+  for (const d of result.detected) {
+    const current = existing[d.provider]
+    // Never overwrite a manual `codeburn plan set` decision with
+    // auto-detect output (autoDetected:false means user-set).
+    if (current && current.autoDetected !== true) continue
+    await savePlan(d.plan)
+  }
+  await recordAutoDetectRun()
+  return result
+}
 
 async function hydrateCache() {
   try {
@@ -120,6 +162,14 @@ program.hook('preAction', async (thisCommand) => {
     process.env['CODEBURN_VERBOSE'] = '1'
   }
   await loadCurrency()
+  // Run plan auto-detect once per day. Skipped silently when a plan is
+  // already set; emits no output even when it succeeds (the next status /
+  // report rendering surfaces the new banner). We skip the `plan`
+  // subcommand entirely because the user is explicitly managing config
+  // there — overlapping reads+writes would race against `savePlan`.
+  if (thisCommand.name() !== 'plan') {
+    await autoDetectAndPersist().catch(() => undefined)
+  }
 })
 
 function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: string) {
@@ -429,10 +479,17 @@ program
         for (const [name, cost] of Object.entries(providerTotals)) {
           providers.push({ name: displayNameByName.get(name) ?? name, cost })
         }
-        for (const p of allProviders) {
-          if (providers.some(pc => pc.name === p.displayName)) continue
-          const sources = await p.discoverSessions()
-          if (sources.length > 0) providers.push({ name: p.displayName, cost: 0 })
+        // Parallelize discovery across providers — sequential await of each
+        // discoverSessions() in a for-loop was the long pole on `report` for
+        // users with many tools installed (each can be a directory walk + JSON
+        // parse). Order in `providers` is no longer load-order; we sort below.
+        const candidatesToProbe = allProviders.filter(p => !providers.some(pc => pc.name === p.displayName))
+        const probed = await Promise.all(candidatesToProbe.map(async p => ({
+          provider: p,
+          hasSessions: (await p.discoverSessions()).length > 0,
+        })))
+        for (const { provider, hasSessions } of probed) {
+          if (hasSessions) providers.push({ name: provider.displayName, cost: 0 })
         }
       } else {
         const display = displayNameByName.get(pf) ?? pf
@@ -488,7 +545,20 @@ program
       })
 
       const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange)
-      console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory)))
+      // Plan/valuation block: when the user has set `codeburn plan set
+      // claude-max` (or similar), surface "$X paid · $Y API value · Zx
+      // leverage" so the menubar / GNOME / scripts know this is a flat
+      // subscription, not pay-as-you-go billing.
+      const planRecord = await readPlan().catch(() => undefined)
+      let valuation
+      if (planRecord) {
+        valuation = computeValuation(currentData.cost, {
+          id: planRecord.id,
+          displayName: planDisplayName(planRecord.id),
+          monthlyUsd: planRecord.monthlyUsd,
+        })
+      }
+      console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory, valuation)))
       return
     }
 
@@ -517,7 +587,13 @@ program
 
     await hydrateCache()
     const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
-    console.log(renderStatusBar(monthProjects))
+    // Read the plan so the status line can switch to "Month value" + leverage
+    // verdict when the user is on a flat subscription instead of pay-as-you-go.
+    const planRecord = await readPlan().catch(() => undefined)
+    const planForStatus = planRecord
+      ? { displayName: planDisplayName(planRecord.id), monthlyUsd: planRecord.monthlyUsd }
+      : null
+    console.log(renderStatusBar(monthProjects, planForStatus))
   })
 
 program
@@ -558,16 +634,17 @@ program
 
 program
   .command('export')
-  .description('Export usage data to CSV or JSON')
-  .option('-f, --format <format>', 'Export format: csv, json', 'csv')
+  .description('Export usage data to CSV, JSON, or self-contained HTML')
+  .option('-f, --format <format>', 'Export format: csv, json, html', 'csv')
   .option('-o, --output <path>', 'Output file path')
   .option('--from <date>', 'Start date (YYYY-MM-DD). Exports a single custom period when set')
   .option('--to <date>', 'End date (YYYY-MM-DD). Exports a single custom period when set')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--redact-paths', 'Replace absolute project paths with salted hashes (safe to share)')
   .action(async (opts) => {
-    assertFormat(opts.format, ['csv', 'json'], 'export')
+    assertFormat(opts.format, ['csv', 'json', 'html'], 'export')
     await loadPricing()
     await hydrateCache()
     const pf = opts.provider
@@ -599,8 +676,96 @@ program
 
     let savedPath: string
     try {
+      if (opts.redactPaths) {
+        const { redactInPlace } = await import('./redact.js')
+        for (const period of periods) await redactInPlace(period.projects)
+      }
       if (opts.format === 'json') {
         savedPath = await exportJson(periods, outputPath)
+      } else if (opts.format === 'html') {
+        const { writeFile } = await import('fs/promises')
+        const { buildExportHtml } = await import('./export-html.js')
+        const { detectSpikes } = await import('./anomaly.js')
+        const period = periods[periods.length - 1]
+        const days = aggregateProjectsIntoDays(period.projects)
+        const data = buildPeriodDataFromDays(days, period.label)
+
+        // Build provider distribution from this period's project data
+        // (each ClassifiedTurn carries the per-provider assistantCalls).
+        const providerCosts = new Map<string, number>()
+        for (const proj of period.projects) {
+          for (const session of proj.sessions) {
+            for (const turn of session.turns) {
+              for (const call of turn.assistantCalls ?? []) {
+                providerCosts.set(call.provider, (providerCosts.get(call.provider) ?? 0) + call.costUSD)
+              }
+            }
+          }
+        }
+        const providers: ProviderCost[] = Array.from(providerCosts.entries())
+          .map(([name, cost]) => ({ name, cost }))
+
+        // Daily history: cost+calls+tokens per day for the timeline chart.
+        const dailyHistory = days.map(d => ({
+          date: d.date,
+          cost: d.cost,
+          calls: d.calls,
+          inputTokens: d.inputTokens,
+          outputTokens: d.outputTokens,
+          cacheReadTokens: d.cacheReadTokens,
+          cacheWriteTokens: d.cacheWriteTokens,
+          topModels: Object.entries(d.models).slice(0, 3).map(([n, m]) => ({
+            name: n, cost: m.cost, calls: m.calls,
+            inputTokens: m.inputTokens, outputTokens: m.outputTokens,
+          })),
+        }))
+
+        // Pull the user's plan (if set) so the HTML hero section can show
+        // "$200 paid · $X value · Yx leverage" instead of the misleading
+        // raw "spend" number.
+        const planRecord = await readPlan().catch(() => undefined)
+        const valuation = planRecord
+          ? computeValuation(data.cost, {
+              id: planRecord.id,
+              displayName: planDisplayName(planRecord.id),
+              monthlyUsd: planRecord.monthlyUsd,
+            })
+          : undefined
+
+        const payload = buildMenubarPayload(data, providers, null, dailyHistory, valuation)
+        const spikes = detectSpikes(dailyHistory.map(d => ({ date: d.date, cost: d.cost })))
+
+        // For the no-plan path, surface providers we know the user uses but
+        // can't auto-detect a tier for (Cursor / Codex / Copilot / Kiro).
+        // Pay-as-you-go API users see no banner — current behavior is correct
+        // for them.
+        const existingPlans = await readAllPlans()
+        const detection = await detectPlans(existingPlans).catch(() =>
+          ({ detected: [], presenceOnly: [] }))
+
+        // Yield analysis is best-effort: needs git access in the user's cwd
+        // and skips silently if cwd isn't a git repo.
+        let yieldSummary = null
+        try {
+          const { computeYield } = await import('./yield.js')
+          yieldSummary = await computeYield(
+            customRange ?? getDateRange('30days').range,
+            process.cwd(),
+          )
+        } catch { /* git unavailable, skip */ }
+
+        const html = buildExportHtml({
+          payload,
+          projects: period.projects,
+          spikes,
+          yieldSummary,
+          presenceOnly: detection.presenceOnly,
+          title: `CodeBurn Report — ${period.label}`,
+          redactPaths: !!opts.redactPaths,
+        })
+        const finalPath = outputPath.endsWith('.html') ? outputPath : `${defaultName}.html`
+        await writeFile(finalPath, html, 'utf-8')
+        savedPath = finalPath
       } else {
         savedPath = await exportCsv(periods, outputPath)
       }
@@ -890,6 +1055,35 @@ program
     console.log(`\n  Analyzing yield for ${label}...\n`)
     const summary = await computeYield(range, process.cwd())
     console.log(formatYieldSummary(summary))
+  })
+
+program
+  .command('diagnose')
+  .description('Show which providers were discovered and what was skipped (verbose pipeline trace)')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (opts: { json?: boolean }) => {
+    const { runDiagnose } = await import('./diagnose.js')
+    await runDiagnose({ json: opts.json })
+  })
+
+program
+  .command('doctor')
+  .description('Verify your environment (Node version, cache permissions, optional providers)')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (opts: { json?: boolean }) => {
+    const { runDoctor } = await import('./doctor.js')
+    const exit = await runDoctor({ json: opts.json })
+    process.exit(exit)
+  })
+
+program
+  .command('import <syncDir>')
+  .description('Merge dated JSONL exports from a multi-machine sync directory into the local cache')
+  .action(async (syncDir: string) => {
+    const { runImport, formatImportReport } = await import('./import-data.js')
+    const report = await runImport(syncDir)
+    console.log(formatImportReport(report))
+    if (report.errors.length > 0) process.exit(1)
   })
 
 program.parse()

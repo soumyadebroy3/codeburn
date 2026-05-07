@@ -58,6 +58,20 @@ function isMigratableCache(parsed: unknown): parsed is { version: number; lastCo
   return c.version >= MIN_SUPPORTED_VERSION && c.version <= DAILY_CACHE_VERSION
 }
 
+// Strip __proto__/constructor/prototype keys from arbitrary record-typed JSON.
+// Cache files live under ~/.cache/codeburn so the trust boundary is the local
+// user, but a hostile import / shared-cache scenario should not be able to
+// poison Object.prototype via these maps.
+function safeRecord<T>(input: unknown): Record<string, T> {
+  const out: Record<string, T> = Object.create(null) as Record<string, T>
+  if (!input || typeof input !== 'object') return out
+  for (const [k, v] of Object.entries(input as Record<string, T>)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue
+    out[k] = v
+  }
+  return out
+}
+
 function migrateDays(days: Record<string, unknown>[]): DailyEntry[] {
   return days.map(d => ({
     date: d.date as string,
@@ -70,9 +84,9 @@ function migrateDays(days: Record<string, unknown>[]): DailyEntry[] {
     cacheWriteTokens: (d.cacheWriteTokens as number) ?? 0,
     editTurns: (d.editTurns as number) ?? 0,
     oneShotTurns: (d.oneShotTurns as number) ?? 0,
-    models: (d.models as DailyEntry['models']) ?? {},
-    categories: (d.categories as DailyEntry['categories']) ?? {},
-    providers: (d.providers as DailyEntry['providers']) ?? {},
+    models: safeRecord<DailyEntry['models'][string]>(d.models),
+    categories: safeRecord<DailyEntry['categories'][string]>(d.categories),
+    providers: safeRecord<DailyEntry['providers'][string]>(d.providers),
   }))
 }
 
