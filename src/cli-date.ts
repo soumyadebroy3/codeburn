@@ -137,8 +137,10 @@ export function getDateRange(period: string): { range: DateRange; label: string 
       return { range: { start, end }, label: 'Last 6 months' }
     }
     default: {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
-      return { range: { start, end }, label: 'Last 7 Days' }
+      process.stderr.write(
+        `codeburn: unknown period "${period}". Valid values: today, week, 30days, month, all.\n`
+      )
+      process.exit(1)
     }
   }
 }

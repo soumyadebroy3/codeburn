@@ -75,6 +75,15 @@ function toJsonPlanSummary(planUsage: PlanUsage): JsonPlanSummary {
   }
 }
 
+function assertFormat(value: string, allowed: readonly string[], command: string): void {
+  if (!allowed.includes(value)) {
+    process.stderr.write(
+      `codeburn ${command}: unknown format "${value}". Valid values: ${allowed.join(', ')}.\n`
+    )
+    process.exit(1)
+  }
+}
+
 async function runJsonReport(period: Period, provider: string, project: string[], exclude: string[]): Promise<void> {
   await loadPricing()
   const { range, label } = getDateRange(period)
@@ -273,6 +282,7 @@ program
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
+    assertFormat(opts.format, ['tui', 'json'], 'report')
     let customRange: DateRange | null = null
     try {
       customRange = parseDateRangeFlags(opts.from, opts.to)
@@ -346,7 +356,7 @@ function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData 
 
 program
   .command('status')
-  .description('Compact status output (today + week + month)')
+  .description('Compact status output (today + month)')
   .option('--format <format>', 'Output format: terminal, menubar-json, json', 'terminal')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
@@ -354,6 +364,7 @@ program
   .option('--period <period>', 'Primary period for menubar-json: today, week, 30days, month, all', 'today')
   .option('--no-optimize', 'Skip optimize findings (menubar-json only, faster)')
   .action(async (opts) => {
+    assertFormat(opts.format, ['terminal', 'menubar-json', 'json'], 'status')
     await loadPricing()
     const pf = opts.provider
     const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)
@@ -518,6 +529,7 @@ program
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
+    assertFormat(opts.format, ['tui', 'json'], 'today')
     if (opts.format === 'json') {
       await runJsonReport('today', opts.provider, opts.project, opts.exclude)
       return
@@ -535,6 +547,7 @@ program
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
+    assertFormat(opts.format, ['tui', 'json'], 'month')
     if (opts.format === 'json') {
       await runJsonReport('month', opts.provider, opts.project, opts.exclude)
       return
@@ -554,6 +567,7 @@ program
   .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .action(async (opts) => {
+    assertFormat(opts.format, ['csv', 'json'], 'export')
     await loadPricing()
     await hydrateCache()
     const pf = opts.provider
@@ -727,6 +741,7 @@ program
   .option('--provider <name>', 'Provider scope: all, claude, codex, cursor', 'all')
   .option('--reset-day <n>', 'Day of month plan resets (1-28)', parseInteger, 1)
   .action(async (action?: string, id?: string, opts?: { format?: string; monthlyUsd?: number; provider?: string; resetDay?: number }) => {
+    assertFormat(opts?.format ?? 'text', ['text', 'json'], 'plan')
     const mode = action ?? 'show'
 
     if (mode === 'show') {

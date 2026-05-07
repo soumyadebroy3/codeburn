@@ -81,10 +81,8 @@ describe('getDateRange', () => {
     expect(range.end.getHours()).toBe(23)
   })
 
-  it('unknown period falls back to "week"', () => {
-    const fallback = getDateRange('not-a-period')
-    const week = getDateRange('week')
-    expect(fallback.label).toBe(week.label)
+  it('unknown period exits with an error instead of silently falling back', () => {
+    expect(() => getDateRange('not-a-period')).toThrow()
   })
 })
 
