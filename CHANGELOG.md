@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.7 - 2026-05-07
+
 ### Added (CLI)
 - **MCP tool coverage detector.** New `optimize` finding flags MCP servers
   whose tool inventory is largely unused. Inventory is observed from the
@@ -28,13 +30,23 @@
   Sessions flagged here take priority and are excluded from both the
   context-bloat and cost-outlier findings so the same session is not listed
   more than once.
+- **Per-model efficiency metrics.** JSON report includes edit turns, one-shot rate, retries per edit, and cost per edit for each model.
+- **Custom date range export.** `codeburn export --from --to` exports a single custom period.
+- **Live Claude quota bar.** Menubar shows real-time quota usage inside the agent tab strip with OAuth refresh gate.
 
 ### Fixed (CLI)
+- **Invalid `--format` silently accepted.** All commands now reject unknown format values with a clear error and exit 1 instead of silently falling back to the default.
+- **Invalid `--period` silently accepted.** `getDateRange()` no longer falls back to "week" on unknown periods. All period-accepting commands reject invalid values.
+- **`status` help text.** Description said "today + week + month" but only today and month were shown. Fixed to match actual output.
 - **Windows Claude project paths.** Claude Code project rollups now prefer
   the canonical `cwd` stored in session JSONL files instead of reconstructing
   paths from lossy directory slugs, and group case/slash variants together.
   Closes #217.
 - **`all` period semantics unified between CLI and dashboard.** The dashboard treated `--period all` as all-time (epoch start) while the CLI bounded it to the last 6 months. Both now consistently mean "Last 6 months". Period helpers (`Period`, `PERIODS`, `PERIOD_LABELS`, `toPeriod`, `getDateRange`) consolidated into `cli-date.ts`. Use `--from` / `--to` for unbounded historical ranges.
+- **Popover anchor, tab strip flicker, and stale-data refresh.** Batch of UI regressions from the menubar hardening round.
+- **Validator hardenings.** Batch of edge-case fixes from the multi-agent bug hunt.
+- **Command injection in yield.** `yield` now uses `execFileSync` instead of `execSync` to prevent shell injection via crafted branch names.
+- **SHA-256 checksum verification.** Menubar installer verifies download integrity before replacing the running app.
 
 ### Fixed (macOS menubar)
 - **Stuck loading spinner.** The menubar ran `--optimize` on every 30-second background refresh. As sessions accumulated, optimize exceeded the 45-second timeout, and the loading overlay stayed forever with no fallback. Optimize is now stripped from all menubar fetches (use `codeburn optimize` in the CLI instead). On fetch failure with empty cache, the app retries without optimize so the spinner always clears.
