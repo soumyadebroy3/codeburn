@@ -1,9 +1,10 @@
 name: Release npm
 
 # Triggered by pushing a `v*` tag. Builds, tests, publishes to npm with sigstore
-# provenance, and uploads a CycloneDX SBOM as a release asset. Requires the
-# `NPM_TOKEN` repo secret (an npm "Automation" token) and the repo to be
-# enabled for OIDC publishing.
+# provenance, and uploads a CycloneDX SBOM as a release asset. Auth uses npm's
+# Trusted Publishing (OIDC): the package's "Trusted Publishers" config on
+# npmjs.com pins this exact repo + workflow, so no long-lived NPM_TOKEN is
+# stored anywhere — npm verifies the GitHub OIDC claim per publish.
 on:
   push:
     tags:
@@ -57,9 +58,10 @@ jobs:
           npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file codeburn-sbom.cdx.json
           echo "SBOM bytes: $(wc -c < codeburn-sbom.cdx.json)"
 
-      - name: Publish to npm with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm with provenance (Trusted Publishing / OIDC)
+        # No NODE_AUTH_TOKEN: npm exchanges the workflow's OIDC token for a
+        # short-lived publish credential, gated by the Trusted Publishers
+        # config on the package itself.
         run: npm publish --provenance --access public
 
       - name: Attach SBOM to GitHub release
