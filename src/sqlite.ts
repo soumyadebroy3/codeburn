@@ -23,6 +23,21 @@ let DatabaseSync: DatabaseSyncCtor | null = null
 let loadAttempted = false
 let loadError: string | null = null
 
+const textDecoder = new TextDecoder('utf-8', { fatal: false })
+
+/// Safely decode a BLOB column (Uint8Array) to a UTF-8 string. Node's
+/// node:sqlite crashes with a V8 CHECK abort when a TEXT column contains
+/// invalid UTF-8 (common in Cursor chat blobs with truncated multi-byte
+/// chars). By selecting those columns as `CAST(... AS BLOB)` in SQL, we
+/// get a Uint8Array here and decode it in JS where bad bytes become the
+/// U+FFFD replacement character instead of aborting the process.
+export function blobToText(value: Uint8Array | string | null | undefined): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  return textDecoder.decode(value)
+}
+
+
 /// Lazily imports `node:sqlite`. On Node 22/23 it emits an ExperimentalWarning the first
 /// time the module is loaded; we silence that specific warning once so dashboards aren't
 /// preceded by a scary stderr line every run. Any other warnings (including future
