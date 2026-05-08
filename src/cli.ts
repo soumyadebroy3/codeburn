@@ -1,6 +1,7 @@
 import { Command } from 'commander'
 import { safeRunGit } from './git-safe.js'
 import { installMenubarApp } from './menubar-installer.js'
+import { installTrayApp } from './tray-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { loadPricing, setModelAliases } from './models.js'
 import { parseAllSessions, filterProjectsByName } from './parser.js'
@@ -849,6 +850,21 @@ program
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`\n  Menubar install failed: ${message}\n`)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('tray')
+  .description('Install and launch the Windows tray app (Windows only — equivalent of `codeburn menubar`)')
+  .option('--force', 'Force-reinstall even when the same version is already installed')
+  .action(async (opts: { force?: boolean }) => {
+    try {
+      const result = await installTrayApp({ force: opts.force })
+      console.log(`\n  Installed from ${result.msiPath}.\n`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`\n  Tray install failed: ${message}\n`)
       process.exit(1)
     }
   })

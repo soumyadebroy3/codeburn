@@ -318,6 +318,8 @@ For lighter output, use `status --format json` (today and month totals only) or 
 
 ## Menu Bar
 
+### macOS
+
 ```bash
 codeburn menubar
 ```
@@ -325,6 +327,16 @@ codeburn menubar
 One command: downloads the latest `.app`, installs into `~/Applications`, and launches it. Re-run with `--force` to reinstall. Native Swift and SwiftUI app lives in `mac/` (see `mac/README.md` for build details).
 
 The menubar icon always shows today's spend (so $0 is normal if you have not used AI tools today). Click to open a popover with agent tabs, period switcher (Today, 7 Days, 30 Days, Month, All), Trend, Forecast, Pulse, Stats, and Plan insights, activity and model breakdowns, optimize findings, and CSV/JSON export. Refreshes every 30 seconds.
+
+### Windows
+
+```bash
+codeburn tray
+```
+
+Same idea, Windows-flavoured. Downloads the latest `.msi`, runs it (basic-UI installer), launches the system-tray app. Tauri-based (Rust shell + WebView frontend) so the binary stays small (~10 MB) and renders the popover with native Windows 11 Mica blur. Source lives in `windows/` (see `windows/README.md`). Same JSON data path as the macOS menubar — same panels, same refresh, same brand.
+
+First run shows a Microsoft SmartScreen warning (artefact is ad-hoc signed); click "More info → Run anyway" once.
 
 **Compact mode** shrinks the menubar item to fit the text, dropping decimals (e.g. `$110` instead of `$110.20`):
 

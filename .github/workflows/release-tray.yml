@@ -1,0 +1,144 @@
+name: Release Windows Tray
+
+# Triggers on a `tray-v*` tag push (e.g. `git tag tray-v0.1.0 && git push origin tray-v0.1.0`),
+# or manually via the Actions tab. Builds the Tauri MSI + NSIS bundles, computes SHA-256,
+# generates a `latest.json` manifest for tauri-plugin-updater, and attaches everything to a
+# GitHub Release.
+on:
+  push:
+    tags:
+      - 'tray-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label for the bundle (e.g. v0.1.0). Letters, digits, dot, dash, underscore only.'
+        required: true
+        default: 'dev-preview'
+
+permissions:
+  contents: write  # Needed to create the release + upload assets.
+
+concurrency:
+  group: release-tray-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Resolve version label
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/tray-v* ]]; then
+            VALUE="${GITHUB_REF#refs/tags/tray-}"
+          else
+            VALUE="${{ github.event.inputs.version }}"
+          fi
+          if ! [[ "$VALUE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::Invalid version label: $VALUE"
+            exit 1
+          fi
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+          # Strip leading "v" for the Tauri config field which expects bare semver.
+          echo "bare=${VALUE#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            windows/src-tauri/target/
+          key: ${{ runner.os }}-cargo-tray-${{ hashFiles('windows/src-tauri/Cargo.lock', 'windows/src-tauri/Cargo.toml') }}
+
+      - name: Build + bundle
+        shell: pwsh
+        working-directory: windows
+        run: pwsh scripts\build-msi.ps1 -Version "${{ steps.version.outputs.value }}"
+
+      - name: Upload artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeburn-tray-${{ steps.version.outputs.value }}
+          path: |
+            windows/src-tauri/target/release/bundle/msi/*.msi
+            windows/src-tauri/target/release/bundle/msi/*.sha256
+            windows/src-tauri/target/release/bundle/nsis/*.exe
+            windows/src-tauri/target/release/bundle/nsis/*.sha256
+          if-no-files-found: error
+
+      - name: Generate latest.json (auto-updater manifest)
+        if: startsWith(github.ref, 'refs/tags/tray-v')
+        shell: pwsh
+        run: |
+          $bare = "${{ steps.version.outputs.bare }}"
+          $tag  = "${{ steps.version.outputs.value }}"
+          # Pick the MSI as the canonical update artefact.
+          $msi = Get-ChildItem windows/src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
+          if (-not $msi) { Write-Error "no MSI found"; exit 1 }
+          $sha = (Get-FileHash -Algorithm SHA256 $msi.FullName).Hash.ToLower()
+          # tauri-plugin-updater expects an Ed25519 signature on the artefact;
+          # for the v1 release we ship `signature: ""` and update via in-place
+          # reinstall. Real signed updates land once we have a signing key.
+          $manifest = [ordered]@{
+            version   = $bare
+            notes     = "Release tray-$tag"
+            pub_date  = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ' -AsUTC)
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = ""
+                url       = "https://github.com/soumyadebroy3/codeburn/releases/download/tray-$tag/$($msi.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 latest.json
+          Get-Content latest.json
+          # SHA-256 sidecar for users who want manual verification.
+          Set-Content -Encoding UTF8 -Path "$($msi.FullName).sha256" -Value "$sha  $($msi.Name)"
+
+      - name: Create / update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/tray-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Tray ${{ steps.version.outputs.value }}
+          body: |
+            Install with:
+
+            ```
+            npx @soumyadebroy3/codeburn tray
+            ```
+
+            That command pulls this MSI into Program Files, registers the
+            uninstaller, and launches the tray. To install manually, download
+            the `.msi` below and double-click — Windows SmartScreen may show
+            a warning on first run since the artefact is ad-hoc signed; click
+            "More info → Run anyway" once.
+
+            Auto-updates are handled in-app via `tauri-plugin-updater` and
+            the `latest.json` manifest also attached to this release.
+          files: |
+            windows/src-tauri/target/release/bundle/msi/*.msi
+            windows/src-tauri/target/release/bundle/msi/*.sha256
+            windows/src-tauri/target/release/bundle/nsis/*.exe
+            windows/src-tauri/target/release/bundle/nsis/*.sha256
+            latest.json
+          fail_on_unmatched_files: false
