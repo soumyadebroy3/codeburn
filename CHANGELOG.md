@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 2.1.0 - 2026-05-08
+
+### Added (CLI)
+- **`codeburn tray` subcommand.** Windows-only equivalent of `codeburn menubar`. Pulls the latest `tray-v*` release from GitHub, verifies SHA-256, runs the MSI installer, launches the system-tray app. Refuses unverified downloads unless `CODEBURN_INSECURE_INSTALL=1`. See `windows/README.md`.
+
+### Added (Windows tray)
+- **Tauri 2.x system-tray companion app** under `windows/`. Mirrors the macOS Swift menubar: same JSON data path, same panels (TopHeader, PeriodSwitcher, PlanSection, Activity, Models, Footer), Mica/Acrylic blur, 30s auto-refresh, single-instance + autostart + auto-updater plugins.
+- Hardened `codeburn` CLI spawn (`windows/src-tauri/src/codeburn_cli.rs`) — direct port of `mac/Sources/CodeBurnMenubar/Security/CodeburnCLI.swift`. Trusted-path resolution (npm-global / scoop\\shims / WinGet\\Packages / Program Files), `NODE_*`/`DYLD_*`/`LD_*`/`GIT_*` env scrub.
+- Credential-shape redaction (`windows/src-tauri/src/log_sanitizer.rs`) — direct port of `LogSanitizer.swift` with the same regex set and `Bearer` rule negative-lookahead.
+- `release-tray.yml` GitHub Actions workflow: builds on `windows-latest` when a `tray-v*` tag is pushed, attaches `.msi` + NSIS `.exe` + `.sha256` + `latest.json` (auto-updater manifest) to a GitHub Release.
+
+## 2.0.0 - 2026-05-08
+
+First release of the `@soumyadebroy3/codeburn` fork. Includes everything from upstream `getagentseal/codeburn` through commit ff7621b plus SonarQube quality gate setup, hardened git invocation (`src/git-safe.ts`), 28 targeted code-smell fixes, plan-aware leverage UX, multi-provider auto-detect, HTML report, and a reproducible LiteLLM pin.
+
 ## 0.9.7 - 2026-05-07
 
 ### Added (CLI)
