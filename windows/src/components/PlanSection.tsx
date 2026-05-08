@@ -7,7 +7,7 @@ type Props = { data: ReportData | null }
 // plus a single progress bar. Capacity-estimator + 5h-window + 7-day-Sonnet
 // detail will be added in a later phase once the Rust port of
 // CapacityEstimator.swift lands.
-export function PlanSection({ data }: Props): JSX.Element | null {
+export function PlanSection({ data }: Props) {
   if (!data) return null
   const { overview } = data
   return (

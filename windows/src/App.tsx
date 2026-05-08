@@ -6,7 +6,7 @@ import { ModelsPanel } from './components/ModelsPanel'
 import { Footer } from './components/Footer'
 import { useStore, useAutoRefresh } from './store'
 
-export default function App(): JSX.Element {
+export default function App() {
   useAutoRefresh()
   const { data, loading, error } = useStore()
 

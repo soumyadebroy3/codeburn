@@ -3,7 +3,7 @@ import { formatUSD } from '../format'
 
 type Props = { data: ReportData | null }
 
-export function ModelsPanel({ data }: Props): JSX.Element | null {
+export function ModelsPanel({ data }: Props) {
   if (!data || data.models.length === 0) return null
   const top = data.models.slice(0, 6)
   const max = Math.max(...top.map(m => m.cost), 1)

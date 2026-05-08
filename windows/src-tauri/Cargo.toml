@@ -2,7 +2,7 @@
 name = "codeburn-tray"
 version = "0.1.0"
 description = "CodeBurn Windows system-tray app — fork of getagentseal/codeburn (soumyadebroy3 fork)"
-authors = ["Soumya"]
+authors = ["soumyadebroy3"]
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
@@ -12,23 +12,21 @@ name = "codeburn_tray_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6.1", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-shell = "2"
-tauri-plugin-autostart = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-single-instance = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-once_cell = "1"
-regex = "1"
-thiserror = "1"
-open = "5"
+tauri = { version = "2.11.1", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-single-instance = "2.4.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+once_cell = "1.21.4"
+regex = "1.12.3"
+thiserror = "2.0.18"
+open = "5.3.4"
 
 [features]
-# By default, Tauri runs in production mode. When `tauri dev` is run, it
-# enables the `dev` feature.
 custom-protocol = ["tauri/custom-protocol"]
