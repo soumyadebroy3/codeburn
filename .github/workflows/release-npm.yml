@@ -31,22 +31,34 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node 22
-        # No `registry-url` here — Trusted Publishing requires no authToken
-        # line in .npmrc, otherwise npm uses the (empty) NODE_AUTH_TOKEN
-        # placeholder setup-node would inject and bypasses the OIDC flow.
-        # `npm publish` falls back to the default public registry, which is
-        # what we want.
+      - name: Setup Node 24
+        # Node 24 ships with npm ≥11.6.0 which has native OIDC Trusted
+        # Publishing. Node 22 bundles npm 10.9.x and `npm install -g
+        # npm@latest` hits a known GitHub Actions toolcache corruption
+        # (missing 'promise-retry'). 24 sidesteps both.
+        # No `registry-url` — Trusted Publishing requires NO authToken in
+        # .npmrc, otherwise npm uses the (empty) NODE_AUTH_TOKEN placeholder
+        # setup-node would inject and bypasses the OIDC flow.
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
-      - name: Upgrade npm to a Trusted-Publishing-capable version
-        # Node 22 ships with npm 10.9.x, but OIDC-based Trusted Publishing
-        # requires npm ≥11.5.1. Bumping to the latest stable closes that
-        # gap and gives us the canonical 'npm publish' OIDC flow.
-        run: npm install -g npm@latest
+      - name: Confirm npm version supports OIDC Trusted Publishing
+        run: |
+          set -e
+          npm --version
+          # Bail loudly if the toolcache surprises us with an old npm.
+          node -e "
+            const v = process.versions.node;
+            const npm = require('child_process').execSync('npm --version').toString().trim();
+            const [maj, min] = npm.split('.').map(Number);
+            if (maj < 11 || (maj === 11 && min < 5)) {
+              console.error('npm', npm, 'is too old for Trusted Publishing (need >=11.5.1)');
+              process.exit(1);
+            }
+            console.log('node', v, '+ npm', npm, 'OK');
+          "
 
       - name: Install (clean)
         run: npm ci
