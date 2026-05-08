@@ -4,14 +4,15 @@
 
 <p align="center"><strong>See where your AI coding tokens go.</strong></p>
 
-<p align="center">                                                                                                                                                                          
-    <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/v/codeburn.svg" alt="npm version" /></a>
-    <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/dt/codeburn.svg" alt="total downloads" /></a>                                                       
-    <a href="https://github.com/soumyadebroy3/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/codeburn.svg" alt="license" /></a>                                            
-    <a href="https://github.com/soumyadebroy3/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="node version" /></a>                                        
-    <a href="https://discord.gg/pJ2DMWvtAx"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>                                     
-    <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa?logo=github" alt="Sponsor" /></a>                                                  
-  </p> 
+<p align="center">
+    <a href="https://www.npmjs.com/package/@soumyadebroy3/codeburn"><img src="https://img.shields.io/npm/v/@soumyadebroy3/codeburn.svg" alt="npm version" /></a>
+    <a href="https://github.com/soumyadebroy3/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/github/license/soumyadebroy3/codeburn.svg" alt="license" /></a>
+    <a href="https://github.com/soumyadebroy3/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg" alt="node version" /></a>
+    <a href="https://github.com/soumyadebroy3/codeburn/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/soumyadebroy3/codeburn/ci.yml?branch=main&label=CI" alt="CI status" /></a>
+  </p>
+
+<p align="center"><sub>Fork of <a href="https://github.com/getagentseal/codeburn">getagentseal/codeburn</a> with hardened git invocation, SonarQube quality-gated builds, plan-aware leverage UX, multi-provider plan auto-detect, and an HTML report. See <a href="#fork-notes">Fork notes</a>.</sub></p>
+
 
 CodeBurn tracks token usage, cost, and performance across **18 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
@@ -38,7 +39,7 @@ Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads sessi
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22+ (matches `package.json` engines)
 - At least one supported AI coding tool with session data on disk
 - For Cursor and OpenCode support, `better-sqlite3` is installed automatically as an optional dependency
 
@@ -249,7 +250,7 @@ codeburn plan                                                 # show current
 codeburn plan reset                                           # remove plan config
 ```
 
-Subscription tracking for Claude Pro, Claude Max, and Cursor Pro. The dashboard shows a progress bar of API-equivalent cost against your plan price. Supports custom plans. Presets use publicly stated plan prices (as of April 2026); they do not model exact token allowances, because vendors do not publish precise consumer-plan limits.
+Subscription tracking for Claude Pro, Claude Max, and Cursor Pro. The dashboard shows a progress bar of API-equivalent cost against your plan price. Supports custom plans. Presets use publicly stated plan prices (current as of May 2026); they do not model exact token allowances, because vendors do not publish precise consumer-plan limits.
 
 ### Currency
 
@@ -430,12 +431,30 @@ src/
  </picture>
 </a>
 
+## Fork notes
+
+This is a fork of [getagentseal/codeburn](https://github.com/getagentseal/codeburn) maintained at [soumyadebroy3/codeburn](https://github.com/soumyadebroy3/codeburn). The fork keeps the upstream feature surface but adds:
+
+- **Hardened git invocation** — every `git` spawn (used by `codeburn yield` and the cwd auto-scope detector) goes through `safeRunGit`, which resolves an absolute git binary, scrubs `GIT_*` env vars, forces `safe.directory=*`/`core.fsmonitor=`/`core.sshCommand=` to neutralize `.git/config` exec vectors, and refuses cwds outside `$HOME` / strict-subpaths of `$TMPDIR` (extendable via `CODEBURN_ALLOWED_PROJECT_ROOTS`).
+- **Pricing accuracy for cache tiers** — Anthropic's 1-hour cache write rate is now read separately from the 5-minute rate, fixing an ~8.5% undercount on long-cache workloads.
+- **Plan-aware leverage UX** — when a `codeburn plan set` is configured, headlines say "Today value / Month value · 6.2× leverage" instead of raw API spend, so users on flat subscriptions don't misread the metered total as a bill.
+- **Multi-provider plan auto-detect** — surfaces providers we know you use but can't auto-detect a tier for (Cursor, Codex, Copilot, Kiro, …) with a one-line `codeburn plan set` snippet for each.
+- **HTML report** — `codeburn export --format html` produces a single self-contained HTML file with a calendar heatmap, daily timeline, anomaly spikes, per-provider donuts, optimize findings, and yield panel — handy for sharing or reviewing a period offline.
+- **Reproducible builds** — `scripts/litellm-pin.json` pins the upstream LiteLLM model-prices file by commit SHA + SHA-256 so `npm run build` is deterministic.
+- **SonarQube-gated CI** — quality gate ✅, coverage threshold 80% on new code, 0 bugs / 0 vulnerabilities / 0 hotspots, plus a Semgrep `no-bracket-assign-hot-paths` guard. The `mcp-sonar/` MCP server lets you drive scans + issue triage from inside Claude Code.
+
+Reproducible build chain (CLI → menubar → tap):
+
+| Asset | Where it lives | How to update |
+|---|---|---|
+| CLI npm package | [`@soumyadebroy3/codeburn`](https://www.npmjs.com/package/@soumyadebroy3/codeburn) | Bump `version` in `package.json`, push, `npm publish --access public` |
+| CLI Homebrew formula | [`soumyadebroy3/homebrew-codeburn`](https://github.com/soumyadebroy3/homebrew-codeburn) (tap) | After cutting `vX.Y.Z`, recompute `sha256 = curl -sfL <tarball-url> \| shasum -a 256`, bump `Formula/codeburn.rb`, push the tap |
+| Menubar `.app` | [`soumyadebroy3/codeburn` releases](https://github.com/soumyadebroy3/codeburn/releases) tagged `mac-vX.Y.Z` | `git tag mac-vX.Y.Z && git push origin mac-vX.Y.Z` — the `Release macOS Menubar` workflow builds, signs, zips, and attaches the artefact |
+
 ## License
 
-MIT
+MIT (matches upstream).
 
 ## Credits
 
-Inspired by [ccusage](https://github.com/ryoppippi/ccusage) and [CodexBar](https://github.com/nicobailon/codexbar). Pricing data from [LiteLLM](https://github.com/BerriAI/litellm). Exchange rates from [Frankfurter](https://www.frankfurter.app/).
-
-Built by [AgentSeal](https://agentseal.org).
+Forked from [getagentseal/codeburn](https://github.com/getagentseal/codeburn) (originally built by [AgentSeal](https://agentseal.org)). Inspired by [ccusage](https://github.com/ryoppippi/ccusage) and [CodexBar](https://github.com/nicobailon/codexbar). Pricing data from [LiteLLM](https://github.com/BerriAI/litellm). Exchange rates from [Frankfurter](https://www.frankfurter.app/).
