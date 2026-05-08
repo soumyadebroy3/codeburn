@@ -32,10 +32,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node 22
+        # No `registry-url` here — Trusted Publishing requires no authToken
+        # line in .npmrc, otherwise npm uses the (empty) NODE_AUTH_TOKEN
+        # placeholder setup-node would inject and bypasses the OIDC flow.
+        # `npm publish` falls back to the default public registry, which is
+        # what we want.
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
       - name: Install (clean)
