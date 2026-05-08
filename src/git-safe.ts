@@ -82,6 +82,15 @@ export function trustedRoots(): string[] {
   return roots
 }
 
+// tmpdir() resolves to /tmp on Linux, /var/folders/... on macOS. We allow
+// scratch directories CREATED inside it (test fixtures, codeburn-* mkdtemp
+// dirs) but never /tmp itself — a hostile .git/config sitting at /tmp would
+// otherwise execute under our hardened spawn. Strict-subpath only.
+function isStrictTmpSubpath(resolved: string): boolean {
+  const tmp = resolve(tmpdir())
+  return resolved !== tmp && resolved.startsWith(tmp + sep)
+}
+
 export function isCwdAllowed(dir: string): boolean {
   let resolved: string
   try {
@@ -89,8 +98,16 @@ export function isCwdAllowed(dir: string): boolean {
   } catch {
     return false
   }
-  for (const root of trustedRoots()) {
-    if (resolved === root || resolved.startsWith(root + sep)) return true
+  if (isStrictTmpSubpath(resolved)) return true
+  const home = resolve(homedir())
+  if (resolved === home || resolved.startsWith(home + sep)) return true
+  const extra = process.env.CODEBURN_ALLOWED_PROJECT_ROOTS
+  if (extra) {
+    for (const r of extra.split(':')) {
+      if (!r) continue
+      const rr = resolve(r)
+      if (resolved === rr || resolved.startsWith(rr + sep)) return true
+    }
   }
   return false
 }

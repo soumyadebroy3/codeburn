@@ -50,9 +50,12 @@ describe('git-safe — isCwdAllowed', () => {
     expect(isCwdAllowed(join(process.env.HOME ?? '/tmp', 'subdir'))).toBe(true)
   })
 
-  it('accepts paths under $TMPDIR', () => {
+  it('accepts strict subpaths of $TMPDIR but rejects the tmp root itself', () => {
     const t = tmpdir()
-    expect(isCwdAllowed(t)).toBe(true)
+    // Bare tmpdir() must NOT be allowed — a hostile .git/config sitting at
+    // /tmp would otherwise execute under our hardened spawn. Subdirs (test
+    // fixtures, mkdtemp scratch dirs) are fine.
+    expect(isCwdAllowed(t)).toBe(false)
     expect(isCwdAllowed(join(t, 'codeburn-test-' + Math.random()))).toBe(true)
   })
 

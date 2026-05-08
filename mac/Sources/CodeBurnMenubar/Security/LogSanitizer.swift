@@ -13,7 +13,11 @@ enum LogSanitizer {
         (#"sk-ant-[A-Za-z0-9_-]+"#, "sk-ant-***"),
         (#"sk-[A-Za-z0-9_-]{16,}"#, "sk-***"),
         (#"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#, "eyJ***"),
-        (#"(?i)Bearer\s+\S+"#, "Bearer ***"),
+        // Bearer rule must NOT clobber a credential already masked by an
+        // earlier rule (e.g. "Bearer sk-ant-***"). The negative lookahead
+        // skips the match when the post-Bearer token already contains "***",
+        // preserving label-bearing replacements like "sk-ant-***" / "eyJ***".
+        (#"(?i)Bearer\s+(?!\S*\*\*\*)\S+"#, "Bearer ***"),
         // Generic high-entropy hex/base64 segments 32+ chars long are usually
         // session IDs, signatures, or refresh tokens. Mask them.
         (#"[A-Za-z0-9_\-]{40,}"#, "***"),

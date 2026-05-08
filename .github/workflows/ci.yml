@@ -67,7 +67,11 @@ jobs:
           python-version: '3.12'
 
       - name: Install Semgrep (pinned)
-        run: pip install 'semgrep==1.93.0'
+        # 1.93.0 pulled an opentelemetry-instrumentation version whose
+        # internal API later broke (BaseInstrumentor moved). 1.110+ ships
+        # against a refreshed opentelemetry pin and imports cleanly on
+        # current pip resolvers.
+        run: pip install --upgrade pip && pip install 'semgrep==1.110.0'
 
       - name: Run Semgrep bracket-assign guard
         run: |
