@@ -1,7 +1,7 @@
-import { existsSync } from 'fs'
-import { readdir, readFile, stat } from 'fs/promises'
-import { basename, dirname, join } from 'path'
-import { homedir } from 'os'
+import { existsSync } from 'node:fs'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
@@ -357,7 +357,7 @@ function parseCwd(yaml: string): string | null {
   if (!match?.[1]) return null
   const raw = match[1]
     .replace(/\s*#.*$/, '')
-    .replace(/^['"]|['"]$/g, '')
+    .replaceAll(/^['"]|['"]$/g, '')
     .trim()
   return raw || null
 }

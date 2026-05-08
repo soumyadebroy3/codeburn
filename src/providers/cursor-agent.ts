@@ -1,8 +1,8 @@
-import { createHash } from 'crypto'
-import { existsSync } from 'fs'
-import { readdir, readFile, stat } from 'fs/promises'
-import { join, basename } from 'path'
-import { homedir } from 'os'
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { join, basename } from 'node:path'
+import { homedir } from 'node:os'
 
 import { calculateCost } from '../models.js'
 import { openDatabase, type SqliteDatabase } from '../sqlite.js'
@@ -86,7 +86,7 @@ function estimateTokens(charCount: number): number {
 function parseToolName(raw: string): string {
   const clean = raw.trim()
   if (clean.length === 0) return 'unknown'
-  return clean.toLowerCase().replace(/\s+/g, '-')
+  return clean.toLowerCase().replaceAll(/\s+/g, '-')
 }
 
 function normalizeTimestamp(raw: string | number | null | undefined): string | null {
@@ -123,7 +123,7 @@ function prettifyProjectId(raw: string): string {
 
   const withoutPrefix = raw.replace(/^-Users-/, '')
   const parts = withoutPrefix.split('-').filter(Boolean)
-  if (parts.length > 0) return parts[parts.length - 1]!
+  if (parts.length > 0) return parts.at(-1)!
 
   return raw
 }
@@ -160,7 +160,7 @@ function extractUserQuery(userBlock: string): string {
     cursor = closeIndex + USER_QUERY_CLOSE.length
   }
 
-  const combined = chunks.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+  const combined = chunks.filter(Boolean).join(' ').replaceAll(/\s+/g, ' ').trim()
   return combined.slice(0, MAX_USER_TEXT_LENGTH)
 }
 

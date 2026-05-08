@@ -1,7 +1,7 @@
-import { open, readFile, writeFile, mkdir, rename, stat, unlink } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
-import { createHash, randomBytes } from 'crypto'
+import { open, readFile, writeFile, mkdir, rename, stat, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { createHash, randomBytes } from 'node:crypto'
 
 import type { ParsedProviderCall } from './providers/types.js'
 

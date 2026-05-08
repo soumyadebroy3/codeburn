@@ -1,8 +1,8 @@
-import { readdir, stat } from 'fs/promises'
-import { createReadStream } from 'fs'
-import { createInterface } from 'readline'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { readdir, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { createInterface } from 'node:readline'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionLines } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
@@ -97,19 +97,21 @@ async function readFirstLine(filePath: string): Promise<CodexEntry | null> {
   // that matter for validation.
   stream.on('error', () => {})
   const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  // Use the async iterator's .next() to grab a single line without a
+  // for-await loop that's immediately broken (S1751 / "loop only
+  // iterates once" trip). Same semantics; cleaner intent.
   let firstLine: string | undefined
   try {
-    for await (const line of rl) {
-      firstLine = line
-      break
-    }
+    const it = rl[Symbol.asyncIterator]()
+    const first = await it.next()
+    if (!first.done) firstLine = first.value
   } catch {
     return null
   } finally {
     rl.close()
     stream.destroy()
   }
-  if (!firstLine || !firstLine.trim()) return null
+  if (!firstLine?.trim()) return null
   try {
     return JSON.parse(firstLine) as CodexEntry
   } catch {
@@ -185,6 +187,246 @@ function resolveModel(info: CodexEntry['payload'], sessionModel?: string): strin
     ?? 'gpt-5'
 }
 
+type CodexParserState = {
+  sessionModel?: string
+  sessionId: string
+  prevCumulativeTotal: number | null
+  prevInput: number
+  prevCached: number
+  prevOutput: number
+  prevReasoning: number
+  pendingTools: string[]
+  pendingUserMessage: string
+  pendingOutputChars: number
+  estCounter: number
+  results: ParsedProviderCall[]
+}
+
+function newCodexParserState(): CodexParserState {
+  return {
+    sessionId: '',
+    prevCumulativeTotal: null,
+    prevInput: 0,
+    prevCached: 0,
+    prevOutput: 0,
+    prevReasoning: 0,
+    pendingTools: [],
+    pendingUserMessage: '',
+    pendingOutputChars: 0,
+    estCounter: 0,
+    results: [],
+  }
+}
+
+function clearPending(state: CodexParserState): void {
+  state.pendingTools = []
+  state.pendingUserMessage = ''
+  state.pendingOutputChars = 0
+}
+
+function handleSessionMeta(state: CodexParserState, entry: CodexEntry, fallbackId: string): void {
+  state.sessionId = entry.payload?.session_id ?? fallbackId
+  state.sessionModel = entry.payload?.model ?? state.sessionModel
+}
+
+function handleUserMessage(state: CodexParserState, entry: CodexEntry): void {
+  const texts = (entry.payload?.content ?? [])
+    .filter(c => c.type === 'input_text')
+    .map(c => c.text ?? '')
+    .filter(Boolean)
+  if (texts.length > 0) state.pendingUserMessage = texts.join(' ')
+}
+
+function handleAssistantMessage(state: CodexParserState, entry: CodexEntry): void {
+  const texts = (entry.payload?.content ?? [])
+    .filter(c => c.type === 'output_text' || c.type === 'text')
+    .map(c => c.text ?? '')
+  state.pendingOutputChars += texts.join('').length
+}
+
+function handleTokenCountEstimated(state: CodexParserState, entry: CodexEntry, seenKeys: Set<string>): void {
+  if (state.pendingOutputChars === 0 && state.pendingUserMessage.length === 0) return
+  const estInput = Math.ceil(state.pendingUserMessage.length / CHARS_PER_TOKEN)
+  const estOutput = Math.ceil(state.pendingOutputChars / CHARS_PER_TOKEN)
+  if (estInput === 0 && estOutput === 0) return
+
+  const model = state.sessionModel ?? 'gpt-5'
+  const timestamp = entry.timestamp ?? ''
+  const dedupKey = `codex:${state.sessionId}:${timestamp}:est${state.estCounter++}`
+
+  if (seenKeys.has(dedupKey)) {
+    clearPending(state)
+    return
+  }
+  seenKeys.add(dedupKey)
+
+  const costUSD = calculateCost(model, estInput, estOutput, 0, 0, 0)
+  state.results.push({
+    provider: 'codex',
+    model,
+    inputTokens: estInput,
+    outputTokens: estOutput,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    cachedInputTokens: 0,
+    reasoningTokens: 0,
+    webSearchRequests: 0,
+    costUSD,
+    costIsEstimated: true,
+    tools: state.pendingTools,
+    bashCommands: [],
+    timestamp,
+    speed: 'standard',
+    deduplicationKey: dedupKey,
+    userMessage: state.pendingUserMessage,
+    sessionId: state.sessionId,
+  })
+  clearPending(state)
+}
+
+type ExtractedTokens = {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+}
+
+// Extract per-turn token counts from a token_count event. Codex usually
+// includes `last_token_usage` (per-turn deltas) but legacy sessions only
+// emit cumulative `total_token_usage`; we derive the delta against the
+// previously-observed cumulative state in that fallback path.
+function extractTurnTokens(state: CodexParserState, info: NonNullable<CodexEntry['payload']>['info']): ExtractedTokens | null {
+  if (!info) return null
+  const last = info.last_token_usage
+  if (last) {
+    return {
+      inputTokens: last.input_tokens ?? 0,
+      cachedInputTokens: last.cached_input_tokens ?? 0,
+      outputTokens: last.output_tokens ?? 0,
+      reasoningTokens: last.reasoning_output_tokens ?? 0,
+    }
+  }
+  const cumulativeTotal = info.total_token_usage?.total_tokens ?? 0
+  if (cumulativeTotal <= 0) {
+    return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
+  }
+  const total = info.total_token_usage
+  if (!total) return null
+  return {
+    inputTokens: (total.input_tokens ?? 0) - state.prevInput,
+    cachedInputTokens: (total.cached_input_tokens ?? 0) - state.prevCached,
+    outputTokens: (total.output_tokens ?? 0) - state.prevOutput,
+    reasoningTokens: (total.reasoning_output_tokens ?? 0) - state.prevReasoning,
+  }
+}
+
+function advancePrevCounters(state: CodexParserState, info: NonNullable<CodexEntry['payload']>['info']): void {
+  // Always advance the prev counters to track cumulative state. The prev
+  // value must mirror what cumulative reports regardless of whether this
+  // event used `last` or fell back to deltas — otherwise a mixed session
+  // double-counts the entire cumulative window on the next fallback event.
+  const total = info?.total_token_usage
+  if (!total) return
+  state.prevInput = total.input_tokens ?? 0
+  state.prevCached = total.cached_input_tokens ?? 0
+  state.prevOutput = total.output_tokens ?? 0
+  state.prevReasoning = total.reasoning_output_tokens ?? 0
+}
+
+function handleTokenCount(state: CodexParserState, entry: CodexEntry, seenKeys: Set<string>): void {
+  const info = entry.payload?.info
+  if (!info) {
+    handleTokenCountEstimated(state, entry, seenKeys)
+    return
+  }
+
+  const cumulativeTotal = info.total_token_usage?.total_tokens ?? 0
+  // Dedup guard. Two consecutive events with cumulativeTotal=0 but non-empty
+  // last_token_usage would have been double-counted under the previous
+  // `> 0` form. The null sentinel ensures the FIRST event always passes.
+  if (state.prevCumulativeTotal !== null && cumulativeTotal === state.prevCumulativeTotal) return
+  state.prevCumulativeTotal = cumulativeTotal
+
+  const tokens = extractTurnTokens(state, info)
+  if (!tokens) return
+  advancePrevCounters(state, info)
+
+  const totalTokens = tokens.inputTokens + tokens.cachedInputTokens + tokens.outputTokens + tokens.reasoningTokens
+  if (totalTokens === 0) return
+
+  // OpenAI includes cached tokens inside input_tokens; Anthropic does not.
+  // Normalize to Anthropic semantics: inputTokens = non-cached only.
+  const uncachedInputTokens = Math.max(0, tokens.inputTokens - tokens.cachedInputTokens)
+  const model = resolveModel(entry.payload, state.sessionModel)
+  const timestamp = entry.timestamp ?? ''
+  const dedupKey = `codex:${state.sessionId}:${timestamp}:${cumulativeTotal}`
+
+  if (seenKeys.has(dedupKey)) return
+  seenKeys.add(dedupKey)
+
+  const costUSD = calculateCost(
+    model,
+    uncachedInputTokens,
+    tokens.outputTokens + tokens.reasoningTokens,
+    0,
+    tokens.cachedInputTokens,
+    0,
+  )
+
+  state.results.push({
+    provider: 'codex',
+    model,
+    inputTokens: uncachedInputTokens,
+    outputTokens: tokens.outputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: tokens.cachedInputTokens,
+    cachedInputTokens: tokens.cachedInputTokens,
+    reasoningTokens: tokens.reasoningTokens,
+    webSearchRequests: 0,
+    costUSD,
+    tools: state.pendingTools,
+    bashCommands: [],
+    timestamp,
+    speed: 'standard',
+    deduplicationKey: dedupKey,
+    userMessage: state.pendingUserMessage,
+    sessionId: state.sessionId,
+  })
+  clearPending(state)
+}
+
+function processCodexEntry(state: CodexParserState, entry: CodexEntry, source: SessionSource, seenKeys: Set<string>): void {
+  const payloadType = entry.payload?.type
+  if (entry.type === 'session_meta') {
+    handleSessionMeta(state, entry, basename(source.path, '.jsonl'))
+    return
+  }
+  if (entry.type === 'turn_context' && entry.payload?.model) {
+    state.sessionModel = entry.payload.model
+    return
+  }
+  if (entry.type === 'response_item' && payloadType === 'function_call') {
+    const rawName = entry.payload?.name ?? ''
+    state.pendingTools.push(toolNameMap[rawName] ?? rawName)
+    return
+  }
+  if (entry.type === 'event_msg' && payloadType === 'patch_apply_end') {
+    state.pendingTools.push('Edit')
+    return
+  }
+  if (entry.type === 'response_item' && payloadType === 'message' && entry.payload?.role === 'user') {
+    handleUserMessage(state, entry)
+    return
+  }
+  if (entry.type === 'response_item' && payloadType === 'message' && entry.payload?.role === 'assistant') {
+    handleAssistantMessage(state, entry)
+    return
+  }
+  if (entry.type === 'event_msg' && payloadType === 'token_count') {
+    handleTokenCount(state, entry, seenKeys)
+  }
+}
+
 function createParser(source: SessionSource, seenKeys: Set<string>): SessionParser {
   return {
     async *parse(): AsyncGenerator<ParsedProviderCall> {
@@ -201,31 +443,13 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       const fp = await fingerprintFile(source.path)
       if (!fp) return
 
-      let sessionModel: string | undefined
-      let sessionId = ''
-      // Null sentinel rather than `0` so the FIRST event is never confused
-      // with a duplicate. A session that only emits last_token_usage (no
-      // total_token_usage) reports cumulativeTotal=0 on every event; with a
-      // 0-initialized prev, the first event would have matched and been
-      // dropped. Once we've observed any event, we record its cumulative
-      // total and dedup on equality regardless of whether it is zero.
-      let prevCumulativeTotal: number | null = null
-      let prevInput = 0
-      let prevCached = 0
-      let prevOutput = 0
-      let prevReasoning = 0
-      let pendingTools: string[] = []
-      let pendingUserMessage = ''
-      let pendingOutputChars = 0
-      let estCounter = 0
+      const state = newCodexParserState()
       let sawAnyLine = false
-      const results: ParsedProviderCall[] = []
 
       // Stream the session file line by line. Heavy Codex sessions can exceed
-      // 250 MB on disk; reading the entire file into a string would either hit
-      // the readSessionFile cap or push V8 toward its 512 MB string limit
-      // after split('\n'). readSessionLines streams via readline so memory
-      // stays bounded to the longest line.
+      // 250 MB on disk; reading the entire file into a string would either
+      // hit the readSessionFile cap or push V8 toward its 512 MB string limit
+      // after split('\n'). readSessionLines streams via readline.
       for await (const rawLine of readSessionLines(source.path)) {
         sawAnyLine = true
         const line = rawLine.trim()
@@ -236,181 +460,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         } catch {
           continue
         }
-
-        if (entry.type === 'session_meta') {
-          sessionId = entry.payload?.session_id ?? basename(source.path, '.jsonl')
-          sessionModel = entry.payload?.model ?? sessionModel
-          continue
-        }
-
-        if (entry.type === 'turn_context' && entry.payload?.model) {
-          sessionModel = entry.payload.model
-          continue
-        }
-
-        if (entry.type === 'response_item' && entry.payload?.type === 'function_call') {
-          const rawName = entry.payload.name ?? ''
-          pendingTools.push(toolNameMap[rawName] ?? rawName)
-          continue
-        }
-
-        if (entry.type === 'event_msg' && entry.payload?.type === 'patch_apply_end') {
-          pendingTools.push('Edit')
-          continue
-        }
-
-        if (entry.type === 'response_item' && entry.payload?.type === 'message' && entry.payload?.role === 'user') {
-          const texts = (entry.payload.content ?? [])
-            .filter(c => c.type === 'input_text')
-            .map(c => c.text ?? '')
-            .filter(Boolean)
-          if (texts.length > 0) pendingUserMessage = texts.join(' ')
-          continue
-        }
-
-        if (entry.type === 'response_item' && entry.payload?.type === 'message' && entry.payload?.role === 'assistant') {
-          const texts = (entry.payload.content ?? [])
-            .filter(c => c.type === 'output_text' || c.type === 'text')
-            .map(c => c.text ?? '')
-          pendingOutputChars += texts.join('').length
-          continue
-        }
-
-        if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-          const info = entry.payload.info
-          if (!info) {
-            if (pendingOutputChars === 0 && pendingUserMessage.length === 0) continue
-            const estInput = Math.ceil(pendingUserMessage.length / CHARS_PER_TOKEN)
-            const estOutput = Math.ceil(pendingOutputChars / CHARS_PER_TOKEN)
-            if (estInput === 0 && estOutput === 0) continue
-
-            const model = sessionModel ?? 'gpt-5'
-            const timestamp = entry.timestamp ?? ''
-            const dedupKey = `codex:${sessionId}:${timestamp}:est${estCounter++}`
-
-            if (seenKeys.has(dedupKey)) { pendingTools = []; pendingUserMessage = ''; pendingOutputChars = 0; continue }
-            seenKeys.add(dedupKey)
-
-            const costUSD = calculateCost(model, estInput, estOutput, 0, 0, 0)
-
-            results.push({
-              provider: 'codex',
-              model,
-              inputTokens: estInput,
-              outputTokens: estOutput,
-              cacheCreationInputTokens: 0,
-              cacheReadInputTokens: 0,
-              cachedInputTokens: 0,
-              reasoningTokens: 0,
-              webSearchRequests: 0,
-              costUSD,
-              costIsEstimated: true,
-              tools: pendingTools,
-              bashCommands: [],
-              timestamp,
-              speed: 'standard',
-              deduplicationKey: dedupKey,
-              userMessage: pendingUserMessage,
-              sessionId,
-            })
-
-            pendingTools = []
-            pendingUserMessage = ''
-            pendingOutputChars = 0
-            continue
-          }
-
-          const cumulativeTotal = info.total_token_usage?.total_tokens ?? 0
-          // Dedup guard. Two consecutive events with cumulativeTotal=0 but
-          // non-empty last_token_usage would have been double-counted with
-          // the previous `> 0` clause. The null sentinel ensures the FIRST
-          // event always passes (so a session that never reports cumulative
-          // doesn't lose its opening turn).
-          if (prevCumulativeTotal !== null && cumulativeTotal === prevCumulativeTotal) continue
-          prevCumulativeTotal = cumulativeTotal
-
-          const last = info.last_token_usage
-          let inputTokens = 0
-          let cachedInputTokens = 0
-          let outputTokens = 0
-          let reasoningTokens = 0
-
-          if (last) {
-            inputTokens = last.input_tokens ?? 0
-            cachedInputTokens = last.cached_input_tokens ?? 0
-            outputTokens = last.output_tokens ?? 0
-            reasoningTokens = last.reasoning_output_tokens ?? 0
-          } else if (cumulativeTotal > 0) {
-            const total = info.total_token_usage
-            if (!total) continue
-            inputTokens = (total.input_tokens ?? 0) - prevInput
-            cachedInputTokens = (total.cached_input_tokens ?? 0) - prevCached
-            outputTokens = (total.output_tokens ?? 0) - prevOutput
-            reasoningTokens = (total.reasoning_output_tokens ?? 0) - prevReasoning
-          }
-
-          // Always advance the prev counters to track the cumulative state.
-          // Previously prev was only updated on the fallback branch, so a
-          // session with mixed last_token_usage / no-last events would
-          // compute the next fallback delta against a stale prev=0 baseline,
-          // double-counting the entire cumulative window. The prev value
-          // must mirror what cumulative reports regardless of whether this
-          // event used `last` or fell back to deltas.
-          const total = info.total_token_usage
-          if (total) {
-            prevInput = total.input_tokens ?? 0
-            prevCached = total.cached_input_tokens ?? 0
-            prevOutput = total.output_tokens ?? 0
-            prevReasoning = total.reasoning_output_tokens ?? 0
-          }
-
-          const totalTokens = inputTokens + cachedInputTokens + outputTokens + reasoningTokens
-          if (totalTokens === 0) continue
-
-          // OpenAI includes cached tokens inside input_tokens; Anthropic does not.
-          // Normalize to Anthropic semantics: inputTokens = non-cached only.
-          const uncachedInputTokens = Math.max(0, inputTokens - cachedInputTokens)
-
-          const model = resolveModel(entry.payload, sessionModel)
-          const timestamp = entry.timestamp ?? ''
-          const dedupKey = `codex:${sessionId}:${timestamp}:${cumulativeTotal}`
-
-          if (seenKeys.has(dedupKey)) continue
-          seenKeys.add(dedupKey)
-
-          const costUSD = calculateCost(
-            model,
-            uncachedInputTokens,
-            outputTokens + reasoningTokens,
-            0,
-            cachedInputTokens,
-            0,
-          )
-
-          results.push({
-            provider: 'codex',
-            model,
-            inputTokens: uncachedInputTokens,
-            outputTokens,
-            cacheCreationInputTokens: 0,
-            cacheReadInputTokens: cachedInputTokens,
-            cachedInputTokens,
-            reasoningTokens,
-            webSearchRequests: 0,
-            costUSD,
-            tools: pendingTools,
-            bashCommands: [],
-            timestamp,
-            speed: 'standard',
-            deduplicationKey: dedupKey,
-            userMessage: pendingUserMessage,
-            sessionId,
-          })
-
-          pendingTools = []
-          pendingUserMessage = ''
-          pendingOutputChars = 0
-        }
+        processCodexEntry(state, entry, source, seenKeys)
       }
 
       // If the stream yielded nothing the file was unreadable, oversized, or
@@ -418,9 +468,9 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       // result set against a fingerprint that would otherwise be re-parsed.
       if (!sawAnyLine) return
 
-      await writeCachedCodexResults(source.path, source.project, results, fp)
+      await writeCachedCodexResults(source.path, source.project, state.results, fp)
 
-      for (const call of results) {
+      for (const call of state.results) {
         yield call
       }
     },

@@ -1,12 +1,12 @@
-import { basename } from 'path'
+import { basename } from 'node:path'
 import stripAnsi from 'strip-ansi'
 
 function stripQuotedStrings(command: string): string {
-  return command.replace(/"[^"]*"|'[^']*'/g, match => ' '.repeat(match.length))
+  return command.replaceAll(/"[^"]*"|'[^']*'/g, match => ' '.repeat(match.length))
 }
 
 export function extractBashCommands(rawCommand: string): string[] {
-  if (!rawCommand || !rawCommand.trim()) return []
+  if (!rawCommand?.trim()) return []
 
   const command = stripAnsi(rawCommand)
   const stripped = stripQuotedStrings(command)

@@ -6,6 +6,19 @@
         "serve"
       ],
       "type": "stdio"
+    },
+    "sonarqube": {
+      "command": "node",
+      "args": [
+        "mcp-sonar/server.mjs"
+      ],
+      "type": "stdio",
+      "env": {
+        "SONAR_HOST_URL": "https://sonar.1channel.co",
+        "SONAR_TOKEN": "${SONAR_TOKEN}",
+        "SONAR_PROJECT_KEY": "codeburn"
+      }
     }
   }
 }
+

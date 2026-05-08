@@ -1,0 +1,19 @@
+{
+  "name": "@codeburn/mcp-sonar",
+  "version": "0.1.0",
+  "description": "MCP server that pushes a codebase to SonarQube for analysis and exposes the resulting issues / quality gate / metrics as MCP tools.",
+  "type": "module",
+  "bin": {
+    "codeburn-mcp-sonar": "server.mjs"
+  },
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "private": true,
+  "files": [
+    "server.mjs",
+    "README.md"
+  ],
+  "license": "MIT"
+}

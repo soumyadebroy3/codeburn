@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readFile, rm } from 'fs/promises'
-import { existsSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   addNewDays,
@@ -55,7 +55,7 @@ describe('loadDailyCache', () => {
   })
 
   it('returns an empty cache when the file contains invalid JSON', async () => {
-    const { writeFile, mkdir } = await import('fs/promises')
+    const { writeFile, mkdir } = await import('node:fs/promises')
     await mkdir(TMP_CACHE_ROOT, { recursive: true })
     await writeFile(join(TMP_CACHE_ROOT, 'daily-cache.json'), 'not valid json{{', 'utf-8')
     const cache = await loadDailyCache()
@@ -68,7 +68,7 @@ describe('loadDailyCache', () => {
       lastComputedDate: '2026-04-10',
       days: [{ date: '2026-04-10', cost: 10, calls: 5 }],
     }
-    const { writeFile, mkdir } = await import('fs/promises')
+    const { writeFile, mkdir } = await import('node:fs/promises')
     await mkdir(TMP_CACHE_ROOT, { recursive: true })
     await writeFile(join(TMP_CACHE_ROOT, 'daily-cache.json'), JSON.stringify(saved), 'utf-8')
     const cache = await loadDailyCache()
@@ -87,7 +87,7 @@ describe('loadDailyCache', () => {
         models: { 'claude-opus-4-6': { calls: 5, cost: 10, inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100 } },
       }],
     }
-    const { writeFile, mkdir } = await import('fs/promises')
+    const { writeFile, mkdir } = await import('node:fs/promises')
     await mkdir(TMP_CACHE_ROOT, { recursive: true })
     await writeFile(join(TMP_CACHE_ROOT, 'daily-cache.json'), JSON.stringify(saved), 'utf-8')
     const cache = await loadDailyCache()
@@ -122,7 +122,7 @@ describe('saveDailyCache', () => {
       days: [emptyDay('2026-04-10', 5)],
     }
     await saveDailyCache(saved)
-    const { readdir } = await import('fs/promises')
+    const { readdir } = await import('node:fs/promises')
     const files = await readdir(TMP_CACHE_ROOT)
     const tempLeftovers = files.filter(f => f.endsWith('.tmp'))
     expect(tempLeftovers).toEqual([])

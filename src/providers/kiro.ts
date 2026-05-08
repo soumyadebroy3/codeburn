@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from 'fs/promises'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
@@ -63,7 +63,7 @@ type KiroChatFile = {
 }
 
 function normalizeModelId(raw: string): string {
-  return raw.replace(/(\d+)\.(\d+)/g, '$1-$2')
+  return raw.replaceAll(/(\d+)\.(\d+)/g, '$1-$2')
 }
 
 function extractToolNames(content: string): string[] {

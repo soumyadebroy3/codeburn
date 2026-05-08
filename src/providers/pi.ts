@@ -1,6 +1,6 @@
-import { readdir, stat } from 'fs/promises'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
@@ -101,7 +101,7 @@ async function discoverSessionsInDir(sessionsDir: string, providerName: string):
       if (!fileStat?.isFile()) continue
 
       const first = await readFirstEntry(filePath)
-      if (!first || first.type !== 'session') continue
+      if (first?.type !== 'session') continue
 
       const cwd = first.cwd ?? dirName
       sources.push({ path: filePath, project: basename(cwd), provider: providerName })

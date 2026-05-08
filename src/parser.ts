@@ -1,5 +1,5 @@
-import { readdir, stat } from 'fs/promises'
-import { basename, join } from 'path'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { readSessionLines } from './fs-utils.js'
 import { calculateCost, getShortModelName } from './models.js'
 import { discoverAllSessions, getProvider } from './providers/index.js'
@@ -23,11 +23,11 @@ import { classifyTurn, BASH_TOOLS } from './classifier.js'
 import { extractBashCommands } from './bash-utils.js'
 
 function unsanitizePath(dirName: string): string {
-  return dirName.replace(/-/g, '/')
+  return dirName.replaceAll('-', '/')
 }
 
 function normalizeProjectPathKey(projectPath: string): string {
-  const normalized = projectPath.trim().replace(/\\/g, '/')
+  const normalized = projectPath.trim().replaceAll('\\', '/')
   return (normalized.replace(/\/+$/, '') || normalized).toLowerCase()
 }
 
@@ -74,7 +74,7 @@ function extractBashCommandsFromContent(content: ContentBlock[]): string[] {
 }
 
 function getUserMessageText(entry: JournalEntry): string {
-  if (!entry.message || entry.message.role !== 'user') return ''
+  if (entry.message?.role !== 'user') return ''
   const content = entry.message.content
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -266,7 +266,7 @@ export function extractMcpInventory(entries: JournalEntry[]): string[] {
     }
   }
   if (inventory.size === 0) return []
-  return Array.from(inventory).sort()
+  return Array.from(inventory).sort((a, b) => a.localeCompare(b))
 }
 
 function extractCanonicalCwd(entries: JournalEntry[]): string | undefined {
@@ -373,7 +373,7 @@ function buildSessionSummary(
     sessionId,
     project,
     firstTimestamp: firstTs || turns[0]?.timestamp || '',
-    lastTimestamp: lastTs || turns[turns.length - 1]?.timestamp || '',
+    lastTimestamp: lastTs || turns.at(-1)?.timestamp || '',
     totalCostUSD: totalCost,
     totalInputTokens: totalInput,
     totalOutputTokens: totalOutput,

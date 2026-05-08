@@ -1,7 +1,7 @@
-import { readdir } from 'fs/promises'
-import { existsSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
+import { readdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from './fs-utils.js'
 

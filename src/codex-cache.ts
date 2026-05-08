@@ -1,8 +1,8 @@
-import { readFile, mkdir, stat, open, rename, unlink } from 'fs/promises'
-import { existsSync } from 'fs'
-import { createHash, randomBytes } from 'crypto'
-import { join } from 'path'
-import { homedir } from 'os'
+import { readFile, mkdir, stat, open, rename, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import type { ParsedProviderCall } from './providers/types.js'
 

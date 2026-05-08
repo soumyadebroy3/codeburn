@@ -6,8 +6,8 @@
  * no diagnostic surface. This command is the answer.
  */
 
-import { homedir } from 'os'
-import { stat } from 'fs/promises'
+import { homedir } from 'node:os'
+import { stat } from 'node:fs/promises'
 import type { Provider } from './providers/types.js'
 import { getAllProviders } from './providers/index.js'
 

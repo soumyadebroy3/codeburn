@@ -23,11 +23,11 @@
  *   }
  */
 
-import { existsSync } from 'fs'
-import { readdir } from 'fs/promises'
-import { homedir } from 'os'
-import { join, sep } from 'path'
-import { pathToFileURL } from 'url'
+import { existsSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { Provider } from './providers/types.js'
 
 function pluginDir(): string {

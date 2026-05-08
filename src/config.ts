@@ -1,7 +1,7 @@
-import { readFile, writeFile, mkdir, rename } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
-import { randomBytes } from 'crypto'
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 
 export type PlanId =
   | 'claude-pro' | 'claude-max' | 'claude-max-5x'
@@ -18,13 +18,6 @@ export type Plan = {
   provider: PlanProvider
   resetDay?: number
   setAt: string
-  /**
-   * True when the plan was auto-detected from a credentials file (Claude OAuth
-   * subscription type, etc.). Lets the CLI distinguish "user explicitly set
-   * this" from "we guessed this" — the latter gets a softer banner that says
-   * `(detected; codeburn plan to override)`.
-   */
-  autoDetected?: boolean
 }
 
 /**
@@ -59,12 +52,6 @@ export type CodeburnConfig = {
   plans?: Record<string, Plan>
   modelAliases?: Record<string, string>
   network?: NetworkPolicy
-  /**
-   * Plan auto-detection state. Set to `false` after the user explicitly
-   * overrides — auto-detection then never re-imports for that provider.
-   * Set to a timestamp when detection runs so we don't re-probe every call.
-   */
-  planAutoDetectAt?: string
 }
 
 /**
@@ -154,11 +141,6 @@ export async function clearPlan(): Promise<void> {
   await saveConfig(config)
 }
 
-export async function recordAutoDetectRun(): Promise<void> {
-  const config = await readConfig()
-  config.planAutoDetectAt = new Date().toISOString()
-  await saveConfig(config)
-}
 
 export function getConfigFilePath(): string {
   return getConfigPath()

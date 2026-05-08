@@ -1,6 +1,6 @@
-import { readdir, stat } from 'fs/promises'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
@@ -55,7 +55,7 @@ function getQwenProjectsDir(): string {
 
 function projectNameFromDirName(dirName: string): string {
   const parts = dirName.replace(/^-/, '').split('-')
-  return parts[parts.length - 1] || dirName
+  return parts.at(-1) || dirName
 }
 
 function extractTools(parts: QwenPart[]): { tools: string[]; bashCommands: string[] } {

@@ -1,6 +1,6 @@
-import { open as openAsync } from 'fs/promises'
-import { openSync, closeSync, fstatSync, readFileSync } from 'fs'
-import { createInterface } from 'readline'
+import { open as openAsync } from 'node:fs/promises'
+import { openSync, closeSync, fstatSync, readFileSync } from 'node:fs'
+import { createInterface } from 'node:readline'
 
 // Hard cap well below V8's 512 MB string limit even with split('\n') doubling.
 // Stream threshold chosen as empirical breakeven between readFile+split peak

@@ -29,6 +29,12 @@ export type ExportContext = {
    * you-go tools — in which case the report shows no banner at all.
    */
   presenceOnly?: ProviderPresence[]
+  /**
+   * Scope of the report data (set by cli.ts). When kind === 'cwd' or
+   * 'explicit' the report renders a "scoped to <X>" subtitle so readers
+   * know they're looking at one repo instead of the global rollup.
+   */
+  scope?: { kind: 'explicit' | 'cwd' | 'all'; label: string | null }
   title?: string
   redactPaths?: boolean
 }
@@ -39,18 +45,18 @@ export type ExportContext = {
 
 function escapeHtml(s: string): string {
   return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
 }
 
 function formatUSD(n: number, exact = false): string {
   if (!exact && Math.abs(n) >= 1000) {
     return `$${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
   }
-  return `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+  return `$${n.toFixed(2).replaceAll(/\B(?=(\d{3})+(?!\d))/g, ',')}`
 }
 
 function formatTokens(n: number): string {
@@ -126,18 +132,20 @@ function calendarHeatmap(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): st
     if (!months.has(ym)) months.set(ym, [])
     months.get(ym)!.push(d)
   }
-  const sortedMonths = Array.from(months.keys()).sort()
+  const sortedMonths = Array.from(months.keys()).sort((a, b) => a.localeCompare(b))
 
-  // Limit to the most recent 4 months so the layout stays clean.
-  const visible = sortedMonths.slice(-4)
+  // Limit to the most recent 12 months so the calendar stays scannable;
+  // anything older becomes a single "+ N earlier months not shown" line so
+  // the truncation is visible instead of silent.
+  const MAX_VISIBLE_MONTHS = 12
+  const visible = sortedMonths.slice(-MAX_VISIBLE_MONTHS)
+  const hiddenCount = sortedMonths.length - visible.length
 
   function monthBlock(ym: string): string {
     const [yy, mm] = ym.split('-').map(Number)
     const monthName = new Date(Date.UTC(yy, mm - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
     const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate()
     const total = (months.get(ym) ?? []).reduce((s, d) => s + d.cost, 0)
-    const observedDays = (months.get(ym) ?? []).length
-    const calls = (months.get(ym) ?? []).reduce((s, d) => s + d.calls, 0)
     // Find the leading offset so the first day lands in its proper weekday column.
     // Sunday-first to match Statuspage. Fall back to absolute-position math so
     // we never mis-align around DST.
@@ -158,9 +166,14 @@ function calendarHeatmap(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): st
     // misleading. Past months render in full. The trailing week of any
     // month (current or past) is allowed to be short; that's the natural
     // shape of a month boundary and we deliberately do NOT pad to 7.
+    //
+    // Use LOCAL date for "today" — the user's intuition about today is
+    // local. UTC-only would clip the wrong day for users in negative-UTC
+    // zones around midnight (PST: UTC May 8 00:30 = May 7 17:30 local;
+    // they expect to see May 7 cell, not May 8).
     const today = new Date()
-    const lastRenderableDay = (yy === today.getUTCFullYear() && mm === today.getUTCMonth() + 1)
-      ? today.getUTCDate()
+    const lastRenderableDay = (yy === today.getFullYear() && mm === today.getMonth() + 1)
+      ? today.getDate()
       : daysInMonth
 
     for (let day = 1; day <= lastRenderableDay; day++) {
@@ -198,9 +211,14 @@ function calendarHeatmap(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): st
     </div>`
   }
 
+  const truncationNote = hiddenCount > 0
+    ? `<div class="cal-truncated">+ ${hiddenCount} earlier month${hiddenCount === 1 ? '' : 's'} not shown · re-run with a tighter <code>--from</code> / <code>--to</code> to focus, or query the JSON export for full history</div>`
+    : ''
+
   return `<div class="cal-row">
     ${visible.map(monthBlock).join('')}
   </div>
+  ${truncationNote}
   <div class="cal-legend">
     <span class="cal-legend-label">Less</span>
     ${HEAT_PALETTE.map(c => `<span class="cell" style="background:${c}"></span>`).join('')}
@@ -216,12 +234,17 @@ function calendarHeatmap(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): st
  * step between tick lines.
  */
 function niceScale(rawMax: number, targetTicks = 5): { niceMax: number; step: number } {
-  if (rawMax <= 0) return { niceMax: 1, step: 1 }
+  // Fast-path for non-finite or non-positive input. Without this, NaN /
+  // Infinity / 0 propagate through Math.log10 → Math.pow → step=NaN, and
+  // the subsequent `for (let v = 0; v <= max; v += step)` loop never
+  // terminates.
+  if (!Number.isFinite(rawMax) || rawMax <= 0) return { niceMax: 1, step: 1 }
   const roughStep = rawMax / targetTicks
   const mag = Math.pow(10, Math.floor(Math.log10(roughStep)))
   const norm = roughStep / mag
   const stepMul = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10
   const step = stepMul * mag
+  if (!Number.isFinite(step) || step <= 0) return { niceMax: 1, step: 1 }
   const niceMax = Math.ceil(rawMax / step) * step
   return { niceMax, step }
 }
@@ -238,7 +261,7 @@ function dailyTimeline(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): stri
   const filled: DailyHistoryEntry[] = []
   if (sorted.length > 0) {
     const start = new Date(sorted[0].date + 'T00:00:00Z')
-    const end = new Date(sorted[sorted.length - 1].date + 'T00:00:00Z')
+    const end = new Date(sorted.at(-1)!.date + 'T00:00:00Z')
     const byDate = new Map(sorted.map(d => [d.date, d]))
     for (let t = start.getTime(); t <= end.getTime(); t += 86_400_000) {
       const iso = new Date(t).toISOString().slice(0, 10)
@@ -475,27 +498,35 @@ function noPlanHint(presence: ProviderPresence[]): string {
   </div>`
 }
 
-function spikeList(spikes: SpikeFinding[]): string {
-  if (spikes.length === 0) return '<div class="empty">No anomalous days detected.</div>'
-  const sorted = [...spikes].sort((a, b) => b.zScore - a.zScore).slice(0, 10)
-  return `<ul class="spikes">${sorted.map(s => `
+function spikeListItem(s: SpikeFinding): string {
+  return `
     <li>
       <span class="badge ${s.severity}">${s.severity}</span>
       <span class="when">${escapeHtml(s.date)}</span>
       <span class="cost">${formatUSD(s.cost, true)}</span>
       <span class="dim">vs baseline ${formatUSD(s.baseline, true)} · z=${s.zScore.toFixed(1)}</span>
     </li>
-  `).join('')}</ul>`
+  `
 }
 
-function findingsList(findings: MenubarPayload['optimize']['topFindings']): string {
-  if (findings.length === 0) return '<div class="empty">No optimizations identified — your spend looks efficient.</div>'
-  return `<table><thead><tr><th>Finding</th><th>Impact</th><th class="num">Est. monthly savings</th></tr></thead><tbody>${findings.map(f => `
+function spikeList(spikes: SpikeFinding[]): string {
+  if (spikes.length === 0) return '<div class="empty">No anomalous days detected.</div>'
+  const sorted = [...spikes].sort((a, b) => b.zScore - a.zScore).slice(0, 10)
+  return `<ul class="spikes">${sorted.map(spikeListItem).join('')}</ul>`
+}
+
+function findingsRow(f: MenubarPayload['optimize']['topFindings'][number]): string {
+  return `
     <tr>
       <td>${escapeHtml(f.title)}</td>
       <td><span class="impact" style="color:${IMPACT_COLOR[f.impact]}">${f.impact}</span></td>
       <td class="num">${formatUSD(f.savingsUSD, true)}</td>
-    </tr>`).join('')}</tbody></table>`
+    </tr>`
+}
+
+function findingsList(findings: MenubarPayload['optimize']['topFindings']): string {
+  if (findings.length === 0) return '<div class="empty">No optimizations identified — your spend looks efficient.</div>'
+  return `<table><thead><tr><th>Finding</th><th>Impact</th><th class="num">Est. monthly savings</th></tr></thead><tbody>${findings.map(findingsRow).join('')}</tbody></table>`
 }
 
 function yieldPanel(y: YieldSummary): string {
@@ -550,6 +581,10 @@ const CSS = `
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
   h1 { font-size: 1.7rem; margin: 0; letter-spacing: -0.01em; }
   .subtitle { color: var(--dim); font-size: .9rem; }
+  .subtitle.scope { margin-top: .15rem; color: var(--accent); font-size: .82rem; }
+  .subtitle.scope code { background: rgba(255,140,66,.12); border: 1px solid rgba(255,140,66,.3);
+                          color: var(--accent); padding: 1px 6px; border-radius: 3px;
+                          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; padding-bottom: .35rem;
        border-bottom: 1px solid var(--border); letter-spacing: .01em;
        display: flex; align-items: center; gap: .5rem; }
@@ -694,6 +729,9 @@ const CSS = `
   .cell.spike-mild   { box-shadow: inset 0 0 0 2px #FFD700; }
   .cell.spike-strong { box-shadow: inset 0 0 0 2px #F57C00; }
   .cell.spike-extreme { box-shadow: inset 0 0 0 2px #C62828; }
+  .cal-truncated { color: var(--muted); font-size: .82rem; margin-top: 1rem;
+                   padding: .5rem .75rem; border: 1px dashed var(--border); border-radius: 6px; }
+  .cal-truncated code { background: var(--grid); padding: 1px 5px; border-radius: 3px; font-size: .82rem; }
   .cal-legend { display: flex; align-items: center; gap: 5px; margin-top: 1rem; flex-wrap: wrap; }
   .cal-legend .cell { flex: 0 0 12px; width: 12px; height: 12px; border-radius: 2px; }
   .cal-legend-label { color: var(--muted); font-size: .78rem; }
@@ -767,6 +805,9 @@ export function buildExportHtml(ctx: ExportContext): string {
   <div>
     <h1>${escapeHtml(title)}</h1>
     <div class="subtitle">${escapeHtml(current.label)} · generated ${escapeHtml(generatedHuman)}${redacted ? ' · paths redacted' : ''}</div>
+    ${ctx.scope && ctx.scope.kind !== 'all' && ctx.scope.label
+        ? `<div class="subtitle scope">scoped to <code>${escapeHtml(ctx.scope.label)}</code> · pass --all-projects to see everything</div>`
+        : ''}
   </div>
   <div class="subtitle">payload schema v${payload.schemaVersion}</div>
 </header>

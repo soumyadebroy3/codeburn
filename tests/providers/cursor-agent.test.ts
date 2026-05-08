@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
-import { existsSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { getAllProviders } from '../../src/providers/index.js'
 import { createCursorAgentProvider } from '../../src/providers/cursor-agent.js'

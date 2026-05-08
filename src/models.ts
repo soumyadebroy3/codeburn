@@ -1,7 +1,7 @@
-import { readFile, mkdir, open, rename, unlink } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
-import { randomBytes } from 'crypto'
+import { readFile, mkdir, open, rename, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 import snapshotData from './data/litellm-snapshot.json'
 
 export type ModelCosts = {
@@ -321,7 +321,7 @@ export function calculateCost(
       // Strip control characters and cap length: model names come from JSONL
       // payloads written by external tools, so a hostile or corrupt file
       // could embed terminal escape sequences here.
-      const safeName = model.replace(/[\x00-\x1F\x7F-\x9F]/g, '?').slice(0, 200)
+      const safeName = model.replaceAll(/[\x00-\x1F\x7F-\x9F]/g, '?').slice(0, 200)
       process.stderr.write(
         `codeburn: no pricing data for model "${safeName}" — costs for this model will show $0. ` +
         `Update with: npx codeburn@latest, or report at https://github.com/getagentseal/codeburn/issues.\n`

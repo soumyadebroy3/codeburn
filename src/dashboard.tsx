@@ -1,4 +1,4 @@
-import { homedir } from 'os'
+import { homedir } from 'node:os'
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { render, Box, Text, useInput, useApp, useWindowSize } from 'ink'
@@ -15,7 +15,7 @@ import { CompareView } from './compare.js'
 import { getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { planDisplayName } from './plans.js'
 import { getDateRange, PERIODS, PERIOD_LABELS, type Period, formatDateRangeLabel } from './cli-date.js'
-import { join } from 'path'
+import { join } from 'node:path'
 import { patchStdoutForWindows } from './ink-win.js'
 
 type View = 'dashboard' | 'optimize' | 'compare'
@@ -103,7 +103,7 @@ function getPeriodRange(period: Period): { start: Date; end: Date } {
 type Layout = { dashWidth: number; wide: boolean; halfWidth: number; barWidth: number }
 
 function getLayout(columns?: number): Layout {
-  const termWidth = columns || parseInt(process.env['COLUMNS'] ?? '') || 80
+  const termWidth = columns || Number.parseInt(process.env['COLUMNS'] ?? '') || 80
   const dashWidth = Math.min(160, termWidth)
   const wide = dashWidth >= MIN_WIDE
   const halfWidth = wide ? Math.floor(dashWidth / 2) : dashWidth
@@ -229,7 +229,9 @@ function DailyActivity({ projects, days = 14, pw, bw }: { projects: ProjectSumma
       }
     }
   }
-  const sortedDays = days !== undefined ? Object.keys(dailyCosts).sort().slice(-days) : Object.keys(dailyCosts).sort()
+  const sortedDays = days !== undefined
+    ? Object.keys(dailyCosts).sort((a, b) => a.localeCompare(b)).slice(-days)
+    : Object.keys(dailyCosts).sort((a, b) => a.localeCompare(b))
   const maxCost = Math.max(...sortedDays.map(d => dailyCosts[d] ?? 0))
 
   return (

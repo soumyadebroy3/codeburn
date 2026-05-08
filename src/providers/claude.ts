@@ -1,6 +1,6 @@
-import { readdir, stat } from 'fs/promises'
-import { basename, join } from 'path'
-import { homedir } from 'os'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
 
 import type { Provider, SessionSource, SessionParser } from './types.js'
 

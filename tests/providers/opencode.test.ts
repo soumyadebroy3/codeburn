@@ -1,7 +1,7 @@
-import { mkdtemp, rm, mkdir, writeFile } from 'fs/promises'
-import { mkdirSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { isSqliteAvailable } from '../../src/sqlite.js'

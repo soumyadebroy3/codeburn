@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { createOpenClawProvider } from '../../src/providers/openclaw.js'
-import { writeFile, mkdir, rm } from 'fs/promises'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { writeFile, mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const SESSION_LINES = [
   JSON.stringify({ type: 'session', version: 3, id: 'test-sess-1', timestamp: '2026-04-20T10:00:00.000Z', cwd: '/tmp' }),

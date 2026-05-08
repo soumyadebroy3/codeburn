@@ -8,11 +8,11 @@
  * (intentional — prevents cross-machine correlation).
  */
 
-import { existsSync } from 'fs'
-import { mkdir, readFile, writeFile } from 'fs/promises'
-import { homedir } from 'os'
-import { join } from 'path'
-import { createHash, randomBytes } from 'crypto'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
 
 let cachedSalt: string | null = null
 
@@ -28,10 +28,31 @@ async function loadSalt(): Promise<string> {
     cachedSalt = (await readFile(path, 'utf-8')).trim()
     if (cachedSalt) return cachedSalt
   }
+  // Race-safe write: stage to a per-process temp file, then atomically
+  // rename onto the final path. If two CLI invocations both find the salt
+  // missing and both call randomBytes(32), the rename is the serialisation
+  // point — second-to-finish loses, both processes re-read the surviving
+  // salt afterwards. Without this, both processes would end up using
+  // different in-memory salts and produce diverging hashes for the same
+  // path within their respective runs.
   const dir = process.env.CODEBURN_CACHE_DIR ?? join(homedir(), '.cache', 'codeburn')
   await mkdir(dir, { recursive: true })
-  cachedSalt = randomBytes(32).toString('hex')
-  await writeFile(path, cachedSalt, { encoding: 'utf-8', mode: 0o600 })
+  const proposed = randomBytes(32).toString('hex')
+  const tempPath = `${path}.${randomBytes(8).toString('hex')}.tmp`
+  try {
+    await writeFile(tempPath, proposed, { encoding: 'utf-8', mode: 0o600 })
+    await rename(tempPath, path)
+  } catch {
+    try { await unlink(tempPath) } catch { /* cleanup */ }
+  }
+  // Re-read whichever process won the rename race so all participants
+  // converge on the same salt within this CLI run AND across overlapping
+  // runs.
+  if (existsSync(path)) {
+    cachedSalt = (await readFile(path, 'utf-8')).trim()
+    if (cachedSalt) return cachedSalt
+  }
+  cachedSalt = proposed
   return cachedSalt
 }
 

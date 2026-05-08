@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { aggregateModelStats, computeComparison, computeCategoryComparison, computeWorkingStyle, scanSelfCorrections, type ModelStats } from '../src/compare-stats.js'
 import type { ProjectSummary, SessionSummary, ClassifiedTurn } from '../src/types.js'
@@ -44,7 +44,7 @@ function makeProject(turns: ClassifiedTurn[]): ProjectSummary {
     sessionId: 'test-session',
     project: 'test-project',
     firstTimestamp: turns[0]?.timestamp ?? '',
-    lastTimestamp: turns[turns.length - 1]?.timestamp ?? '',
+    lastTimestamp: turns.at(-1)?.timestamp ?? '',
     totalCostUSD: turns.reduce((s, t) => s + t.assistantCalls.reduce((s2, c) => s2 + c.costUSD, 0), 0),
     totalInputTokens: 0,
     totalOutputTokens: 0,

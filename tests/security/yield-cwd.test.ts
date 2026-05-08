@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execFileSync } from 'child_process'
-import { mkdtemp, mkdir, writeFile, rm, stat } from 'fs/promises'
-import { tmpdir, homedir } from 'os'
-import { join, sep } from 'path'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, mkdir, writeFile, rm, stat } from 'node:fs/promises'
+import { tmpdir, homedir } from 'node:os'
+import { join, sep } from 'node:path'
 
 import { __test__ } from '../../src/yield.js'
 

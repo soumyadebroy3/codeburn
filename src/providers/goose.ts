@@ -1,5 +1,5 @@
-import { join } from 'path'
-import { homedir, platform } from 'os'
+import { join } from 'node:path'
+import { homedir, platform } from 'node:os'
 
 import { calculateCost, getShortModelName } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'
@@ -146,7 +146,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       }
 
       const segments = source.path.split(':')
-      const sessionId = segments[segments.length - 1]!
+      const sessionId = segments.at(-1)!
       const dbPath = segments.slice(0, -1).join(':')
 
       let db: SqliteDatabase

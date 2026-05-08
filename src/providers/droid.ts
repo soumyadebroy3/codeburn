@@ -1,6 +1,6 @@
-import { readdir, stat, readFile } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
+import { readdir, stat, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile, readSessionLines } from '../fs-utils.js'
 import { calculateCost, getShortModelName } from '../models.js'
@@ -75,7 +75,7 @@ function getFactoryDir(): string {
 function stripModelPrefix(raw: string): string {
   return raw
     .replace(/^custom:/, '')
-    .replace(/\[.*?\]/g, '')
+    .replaceAll(/\[.*?\]/g, '')
     .replace(/-\d+$/, '')
     .replace(/-+$/, '')
     .replace(/^-/, '')
@@ -102,7 +102,7 @@ function parseModelForDisplay(raw: string): string {
  * Instead, extract only the primary command from each logical line.
  */
 function extractDroidBashCommands(command: string): string[] {
-  if (!command || !command.trim()) return []
+  if (!command?.trim()) return []
 
   const firstLine = command.split('\n')[0]!.trim()
   return extractBashCommands(firstLine)
@@ -319,10 +319,16 @@ function deriveProjectName(cwd: string): string {
 }
 
 async function readFirstJsonlLine(filePath: string): Promise<string | null> {
-  for await (const line of readSessionLines(filePath)) {
-    return line
+  // Pull the first line off the async iterator with .next() instead of a
+  // for-await-loop-with-immediate-return. Same semantics; satisfies S1751
+  // ("loop only iterates once") which the previous shape tripped.
+  const it = readSessionLines(filePath)[Symbol.asyncIterator]()
+  try {
+    const first = await it.next()
+    return first.done ? null : first.value
+  } finally {
+    if (typeof it.return === 'function') await it.return(undefined)
   }
-  return null
 }
 
 async function discoverSessionsInDir(

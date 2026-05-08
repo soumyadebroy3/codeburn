@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { createCodexProvider } from '../../src/providers/codex.js'
 import type { ParsedProviderCall } from '../../src/providers/types.js'
@@ -370,5 +370,80 @@ describe('codex provider - JSONL parsing', () => {
       calls.push(call)
     }
     expect(calls).toHaveLength(1)
+  })
+
+  it('falls back to char-based estimation when token_count has no info', async () => {
+    // Older codex sessions emit token_count events without an `info` payload.
+    // The parser must still produce a turn entry by estimating tokens from
+    // pending user/assistant text length (handleTokenCountEstimated path).
+    const assistantMessage = JSON.stringify({
+      type: 'response_item',
+      timestamp: '2026-04-14T10:00:30Z',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'A long-ish response from the assistant' }],
+      },
+    })
+    const tokenCountNoInfo = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-04-14T10:01:00Z',
+      payload: { type: 'token_count' },
+    })
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-noinfo.jsonl', [
+      sessionMeta({ session_id: 'sess-noinfo' }),
+      userMessage('What is the bug?'),
+      assistantMessage,
+      tokenCountNoInfo,
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) {
+      calls.push(call)
+    }
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.costIsEstimated).toBe(true)
+    expect(calls[0]!.inputTokens).toBeGreaterThan(0)
+    expect(calls[0]!.outputTokens).toBeGreaterThan(0)
+    expect(calls[0]!.userMessage).toBe('What is the bug?')
+  })
+
+  it('handles patch_apply_end and turn_context model updates', async () => {
+    // patch_apply_end pushes 'Edit' onto pending tools. turn_context updates
+    // sessionModel mid-stream. Exercises both dispatch branches.
+    const patchApplyEnd = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-04-14T10:00:30Z',
+      payload: { type: 'patch_apply_end' },
+    })
+    const turnContext = JSON.stringify({
+      type: 'turn_context',
+      timestamp: '2026-04-14T10:00:35Z',
+      payload: { model: 'gpt-5.5' },
+    })
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-patch.jsonl', [
+      sessionMeta({ session_id: 'sess-patch' }),
+      userMessage('apply the diff'),
+      patchApplyEnd,
+      turnContext,
+      tokenCount({
+        last: { input: 100, output: 50 },
+        total: { total: 150 },
+      }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) {
+      calls.push(call)
+    }
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.tools).toContain('Edit')
+    expect(calls[0]!.model).toBe('gpt-5.5')
   })
 })

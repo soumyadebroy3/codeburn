@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { calculateCost } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'

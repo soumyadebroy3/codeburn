@@ -1,8 +1,8 @@
-import { randomBytes } from 'crypto'
-import { existsSync } from 'fs'
-import { mkdir, open, readFile, rename, unlink } from 'fs/promises'
-import { homedir } from 'os'
-import { join } from 'path'
+import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { DateRange, ProjectSummary } from './types.js'
 
 export const DAILY_CACHE_VERSION = 4
@@ -205,15 +205,15 @@ export async function ensureCacheHydrated(
     const hadYesterday = c.days.some(d => d.date >= yesterdayStr)
     if (hadYesterday) {
       const freshDays = c.days.filter(d => d.date < yesterdayStr)
-      const latestFresh = freshDays.length > 0 ? freshDays[freshDays.length - 1].date : null
+      const latestFresh = freshDays.length > 0 ? freshDays.at(-1)!.date : null
       c = { ...c, days: freshDays, lastComputedDate: latestFresh }
     }
 
     const gapStart = c.lastComputedDate
       ? new Date(
-          parseInt(c.lastComputedDate.slice(0, 4)),
-          parseInt(c.lastComputedDate.slice(5, 7)) - 1,
-          parseInt(c.lastComputedDate.slice(8, 10)) + 1
+          Number.parseInt(c.lastComputedDate.slice(0, 4)),
+          Number.parseInt(c.lastComputedDate.slice(5, 7)) - 1,
+          Number.parseInt(c.lastComputedDate.slice(8, 10)) + 1
         )
       : new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS)
 

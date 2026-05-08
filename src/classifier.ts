@@ -1,19 +1,72 @@
 import type { ClassifiedTurn, ParsedTurn, TaskCategory } from './types.js'
 
-const TEST_PATTERNS = /\b(test|pytest|vitest|jest|mocha|spec|coverage|npm\s+test|npx\s+vitest|npx\s+jest)\b/i
-const GIT_PATTERNS = /\bgit\s+(push|pull|commit|merge|rebase|checkout|branch|stash|log|diff|status|add|reset|cherry-pick|tag)\b/i
-const BUILD_PATTERNS = /\b(npm\s+run\s+build|npm\s+publish|pip\s+install|docker|deploy|make\s+build|npm\s+run\s+dev|npm\s+start|pm2|systemctl|brew|cargo\s+build)\b/i
-const INSTALL_PATTERNS = /\b(npm\s+install|pip\s+install|brew\s+install|apt\s+install|cargo\s+add)\b/i
+// Each pattern group is split into multiple smaller regexes so each individual
+// literal stays well under Sonar's S5843 cognitive-complexity-of-regex
+// threshold (20). Behaviour of the predicate is unchanged: anyMatch returns
+// true if ANY of the regexes matches, which is identical to a single
+// alternation regex.
+function anyMatch(patterns: RegExp[], s: string): boolean {
+  for (const p of patterns) {
+    if (p.test(s)) return true
+  }
+  return false
+}
 
-const DEBUG_KEYWORDS = /\b(fix|bug|error|broken|failing|crash|issue|debug|traceback|exception|stack\s*trace|not\s+working|wrong|unexpected|status\s+code|404|500|401|403)\b/i
-const FEATURE_KEYWORDS = /\b(add|create|implement|new|build|feature|introduce|set\s*up|scaffold|generate|make\s+(?:a|me|the)|write\s+(?:a|me|the))\b/i
-const REFACTOR_KEYWORDS = /\b(refactor|clean\s*up|rename|reorganize|simplify|extract|restructure|move|migrate|split)\b/i
-const BRAINSTORM_KEYWORDS = /\b(brainstorm|idea|what\s+if|explore|think\s+about|approach|strategy|design|consider|how\s+should|what\s+would|opinion|suggest|recommend)\b/i
-const RESEARCH_KEYWORDS = /\b(research|investigate|look\s+into|find\s+out|check|search|analyze|review|understand|explain|how\s+does|what\s+is|show\s+me|list|compare)\b/i
+const TEST_PATTERNS: RegExp[] = [
+  /\b(?:test|pytest|vitest|jest|mocha|spec|coverage)\b/i,
+  /\bnpm\s+test\b/i,
+  /\bnpx\s+(?:vitest|jest)\b/i,
+]
+const GIT_PATTERNS: RegExp[] = [
+  /\bgit\s+(?:push|pull|commit|merge|rebase|checkout|branch|stash)\b/i,
+  /\bgit\s+(?:log|diff|status|add|reset|cherry-pick|tag)\b/i,
+]
+const BUILD_PATTERNS: RegExp[] = [
+  /\bnpm\s+(?:run\s+(?:build|dev)|publish|start)\b/i,
+  /\b(?:pip\s+install|cargo\s+build|make\s+build|brew)\b/i,
+  /\b(?:docker|deploy|pm2|systemctl)\b/i,
+]
+const INSTALL_PATTERNS: RegExp[] = [
+  /\b(?:npm|pip|brew|apt)\s+install\b/i,
+  /\bcargo\s+add\b/i,
+]
 
-const FILE_PATTERNS = /\.(py|js|ts|tsx|jsx|json|yaml|yml|toml|sql|sh|go|rs|java|rb|php|css|html|md|csv|xml)\b/i
-const SCRIPT_PATTERNS = /\b(run\s+\S+\.\w+|execute|scrip?t|curl|api\s+\S+|endpoint|request\s+url|fetch\s+\S+|query|database|db\s+\S+)\b/i
-const URL_PATTERN = /https?:\/\/\S+/i
+const DEBUG_KEYWORDS: RegExp[] = [
+  /\b(?:fix|bug|error|broken|failing|crash|issue|debug)\b/i,
+  /\b(?:traceback|exception|stack\s*trace|not\s+working|wrong|unexpected|status\s+code)\b/i,
+  /\b(?:404|500|401|403)\b/i,
+]
+const FEATURE_KEYWORDS: RegExp[] = [
+  /\b(?:add|create|implement|new|build|feature|introduce|set\s*up|scaffold|generate)\b/i,
+  /\b(?:make|write)\s+(?:a|me|the)\b/i,
+]
+const REFACTOR_KEYWORDS: RegExp[] = [
+  /\b(?:refactor|clean\s*up|rename|reorganize|simplify|extract|restructure|move|migrate|split)\b/i,
+]
+const BRAINSTORM_KEYWORDS: RegExp[] = [
+  /\b(?:brainstorm|idea|explore|think\s+about|approach|strategy|design|consider|opinion|suggest|recommend)\b/i,
+  /\bwhat\s+(?:if|would)\b/i,
+  /\bhow\s+should\b/i,
+]
+const RESEARCH_KEYWORDS: RegExp[] = [
+  /\b(?:research|investigate|check|search|analyze|review|understand|explain|list|compare)\b/i,
+  /\b(?:look\s+into|find\s+out|show\s+me)\b/i,
+  /\b(?:how\s+does|what\s+is)\b/i,
+]
+
+const FILE_PATTERNS: RegExp[] = [
+  /\.(?:py|js|ts|tsx|jsx|json|yaml|yml|toml|sql|sh)\b/i,
+  /\.(?:go|rs|java|rb|php|css|html|md|csv|xml)\b/i,
+]
+const SCRIPT_PATTERNS: RegExp[] = [
+  /\brun\s+\S+\.\w+\b/i,
+  /\b(?:execute|scrip?t|curl|endpoint|query|database)\b/i,
+  /\b(?:api|fetch|db)\s+\S+/i,
+  /\brequest\s+url\b/i,
+]
+const URL_PATTERN: RegExp[] = [
+  /https?:\/\/\S+/i,
+]
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'FileEditTool', 'FileWriteTool', 'NotebookEdit', 'cursor:edit'])
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'FileReadTool', 'GrepTool', 'GlobTool'])
@@ -74,10 +127,10 @@ function classifyByToolPattern(turn: ParsedTurn): TaskCategory | null {
 
   if (hasBash && !hasEdits) {
     const userMsg = turn.userMessage
-    if (TEST_PATTERNS.test(userMsg)) return 'testing'
-    if (GIT_PATTERNS.test(userMsg)) return 'git'
-    if (BUILD_PATTERNS.test(userMsg)) return 'build/deploy'
-    if (INSTALL_PATTERNS.test(userMsg)) return 'build/deploy'
+    if (anyMatch(TEST_PATTERNS, userMsg)) return 'testing'
+    if (anyMatch(GIT_PATTERNS, userMsg)) return 'git'
+    if (anyMatch(BUILD_PATTERNS, userMsg)) return 'build/deploy'
+    if (anyMatch(INSTALL_PATTERNS, userMsg)) return 'build/deploy'
   }
 
   if (hasEdits) return 'coding'
@@ -95,15 +148,15 @@ function classifyByToolPattern(turn: ParsedTurn): TaskCategory | null {
 
 function refineByKeywords(category: TaskCategory, userMessage: string): TaskCategory {
   if (category === 'coding') {
-    if (DEBUG_KEYWORDS.test(userMessage)) return 'debugging'
-    if (REFACTOR_KEYWORDS.test(userMessage)) return 'refactoring'
-    if (FEATURE_KEYWORDS.test(userMessage)) return 'feature'
+    if (anyMatch(DEBUG_KEYWORDS, userMessage)) return 'debugging'
+    if (anyMatch(REFACTOR_KEYWORDS, userMessage)) return 'refactoring'
+    if (anyMatch(FEATURE_KEYWORDS, userMessage)) return 'feature'
     return 'coding'
   }
 
   if (category === 'exploration') {
-    if (RESEARCH_KEYWORDS.test(userMessage)) return 'exploration'
-    if (DEBUG_KEYWORDS.test(userMessage)) return 'debugging'
+    if (anyMatch(RESEARCH_KEYWORDS, userMessage)) return 'exploration'
+    if (anyMatch(DEBUG_KEYWORDS, userMessage)) return 'debugging'
     return 'exploration'
   }
 
@@ -111,13 +164,13 @@ function refineByKeywords(category: TaskCategory, userMessage: string): TaskCate
 }
 
 function classifyConversation(userMessage: string): TaskCategory {
-  if (BRAINSTORM_KEYWORDS.test(userMessage)) return 'brainstorming'
-  if (RESEARCH_KEYWORDS.test(userMessage)) return 'exploration'
-  if (DEBUG_KEYWORDS.test(userMessage)) return 'debugging'
-  if (FEATURE_KEYWORDS.test(userMessage)) return 'feature'
-  if (FILE_PATTERNS.test(userMessage)) return 'coding'
-  if (SCRIPT_PATTERNS.test(userMessage)) return 'coding'
-  if (URL_PATTERN.test(userMessage)) return 'exploration'
+  if (anyMatch(BRAINSTORM_KEYWORDS, userMessage)) return 'brainstorming'
+  if (anyMatch(RESEARCH_KEYWORDS, userMessage)) return 'exploration'
+  if (anyMatch(DEBUG_KEYWORDS, userMessage)) return 'debugging'
+  if (anyMatch(FEATURE_KEYWORDS, userMessage)) return 'feature'
+  if (anyMatch(FILE_PATTERNS, userMessage)) return 'coding'
+  if (anyMatch(SCRIPT_PATTERNS, userMessage)) return 'coding'
+  if (anyMatch(URL_PATTERN, userMessage)) return 'exploration'
   return 'conversation'
 }
 

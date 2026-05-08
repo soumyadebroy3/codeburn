@@ -93,7 +93,7 @@ function formatCost(value, currency, rate = 1, exact = false) {
   const symbol = currency?.symbol || '$';
   if (!exact && abs >= 1000) return `${symbol}${(n / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
   const parts = n.toFixed(2).split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  parts[0] = parts[0].replaceAll(/\B(?=(\d{3})+(?!\d))/g, ',');
   return `${symbol}${parts.join('.')}`;
 }
 

@@ -42,3 +42,5 @@ assets/discord-*.png
 desktop/
 # Added by code-review-graph
 .code-review-graph/
+coverage/
+.scannerwork/

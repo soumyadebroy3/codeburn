@@ -68,13 +68,20 @@ export function renderStatusBar(
   // because the user pays the flat plan price, not the metered total.
   const monthLabel = plan ? 'Month value' : 'Month'
   const todayLabel = plan ? 'Today value' : 'Today'
-  lines.push(`  ${chalk.bold(todayLabel)}  ${chalk.yellowBright(formatCost(todayCost))}  ${chalk.dim(`${todayCalls} calls`)}    ${chalk.bold(monthLabel)}  ${chalk.yellowBright(formatCost(monthCost))}  ${chalk.dim(`${monthCalls} calls`)}`)
+  const todayCallsText = `${todayCalls} calls`
+  const monthCallsText = `${monthCalls} calls`
+  lines.push(`  ${chalk.bold(todayLabel)}  ${chalk.yellowBright(formatCost(todayCost))}  ${chalk.dim(todayCallsText)}    ${chalk.bold(monthLabel)}  ${chalk.yellowBright(formatCost(monthCost))}  ${chalk.dim(monthCallsText)}`)
   if (plan && plan.monthlyUsd > 0) {
     const leverage = monthCost / plan.monthlyUsd
     const arrow = leverage >= 1 ? '✓' : '⚠'
+    const leverageText = `${leverage.toFixed(1)}× leverage`
+    const planPriceText = `$${plan.monthlyUsd}`
+    const planDisplayText = `${plan.displayName} flat`
+    const lowLeverageText = `${leverage.toFixed(1)}×`
+    const lowLeverageDetail = `— underutilizing your $${plan.monthlyUsd} ${plan.displayName} plan`
     const verdict = leverage >= 1
-      ? `${chalk.greenBright(`${leverage.toFixed(1)}× leverage`)} ${chalk.dim('on your')} ${chalk.bold(`$${plan.monthlyUsd}`)} ${chalk.dim(`${plan.displayName} flat`)}`
-      : `${chalk.yellowBright(`${leverage.toFixed(1)}×`)} ${chalk.dim(`— underutilizing your $${plan.monthlyUsd} ${plan.displayName} plan`)}`
+      ? `${chalk.greenBright(leverageText)} ${chalk.dim('on your')} ${chalk.bold(planPriceText)} ${chalk.dim(planDisplayText)}`
+      : `${chalk.yellowBright(lowLeverageText)} ${chalk.dim(lowLeverageDetail)}`
     lines.push(`  ${chalk.dim(arrow)} ${verdict}`)
   }
   lines.push('')

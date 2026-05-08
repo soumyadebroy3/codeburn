@@ -1,6 +1,6 @@
-import { readdir } from 'fs/promises'
-import { join } from 'path'
-import { homedir } from 'os'
+import { readdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { calculateCost, getShortModelName } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'
@@ -121,7 +121,7 @@ function validateSchema(db: SqliteDatabase): boolean {
 const warnedOpenCodeSchemas = new Set<string>()
 
 function warnUnrecognizedOpenCodeSchemaOnce(missing: string[]): void {
-  const key = missing.slice().sort().join(',')
+  const key = missing.slice().sort((a, b) => a.localeCompare(b)).join(',')
   if (warnedOpenCodeSchemas.has(key)) return
   warnedOpenCodeSchemas.add(key)
   process.stderr.write(
@@ -145,7 +145,7 @@ function createParser(
       // (no colons), so the last segment after splitting on ':' is always
       // the session ID. Rejoining handles Windows drive letters (C:\...).
       const segments = source.path.split(':')
-      const sessionId = segments[segments.length - 1]!
+      const sessionId = segments.at(-1)!
       const dbPath = segments.slice(0, -1).join(':')
 
       let db: SqliteDatabase

@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import { safeRunGit } from './git-safe.js'
 import { installMenubarApp } from './menubar-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { loadPricing, setModelAliases } from './models.js'
@@ -16,8 +17,8 @@ import { formatDateRangeLabel, parseDateRangeFlags, getDateRange, toPeriod, type
 import { runOptimize, scanAndDetect } from './optimize.js'
 import { renderCompare } from './compare.js'
 import { getAllProviders } from './providers/index.js'
-import { clearPlan, readConfig, readPlan, readAllPlans, saveConfig, savePlan, recordAutoDetectRun, getConfigFilePath, type Plan, type PlanId } from './config.js'
-import { detectPlans, presenceHintLines, type DetectionResult } from './plan-detect.js'
+import { clearPlan, readConfig, readPlan, readAllPlans, saveConfig, savePlan, getConfigFilePath, type PlanId } from './config.js'
+import { detectPlans } from './plan-detect.js'
 import { clampResetDay, getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { getPresetPlan, isPlanId, isPlanProvider, planDisplayName } from './plans.js'
 import { createRequire } from 'node:module'
@@ -27,44 +28,41 @@ const { version } = require('../package.json')
 import { loadCurrency, getCurrency, isValidCurrencyCode } from './currency.js'
 
 /**
- * One-shot, idempotent plan auto-detection.
+ * If the cwd is inside a git repo, return that repo's root path. Used to
+ * auto-scope reports to the repo the user is in — running `codeburn export`
+ * from /Users/soumya/terraform-aws aggregates only that project, not
+ * everything codeburn knows about. Pass --all-projects to opt out.
  *
- * Scans local credential files (Claude only today — see plan-detect.ts) and
- * persists any high-confidence detection. After running once we record a
- * timestamp in config so subsequent CLI invocations skip the I/O. The user
- * can override at any time with `codeburn plan set …`; explicit user plans
- * are never clobbered (see savePlan: per-provider keys, not whole-config
- * replacement).
- *
- * Returns the latest DetectionResult so callers can show hint cards for
- * presence-only providers.
+ * Routes through the same `safeRunGit` primitive that yield.ts uses, so
+ * the two callers can't drift — they share `SAFE_GIT_ARGS`, `safeGitEnv`,
+ * and the trusted-roots allowlist.
  */
-async function autoDetectAndPersist(force = false): Promise<DetectionResult> {
-  const config = await readConfig()
-  const existing = await readAllPlans()
+function detectCwdRepoRoot(): string | null {
+  const out = safeRunGit(['rev-parse', '--show-toplevel'], process.cwd(), 3_000)
+  return out || null
+}
 
-  // Cooldown only applies when at least one plan is already known. Without
-  // any plan, every CLI invocation re-probes — the user is in the "I just
-  // installed codeburn" state and we want detection to fire as soon as it
-  // can (e.g. they granted Keychain access between two runs).
-  const lastRunIso = config.planAutoDetectAt
-  const lastRun = lastRunIso ? Date.parse(lastRunIso) : 0
-  const now = Date.now()
-  const fresh = lastRun > 0 && now - lastRun < 24 * 60 * 60 * 1000
-  if (!force && fresh && Object.keys(existing).length > 0) {
-    return { detected: [], presenceOnly: [] }
+/**
+ * Resolve the effective project filter for a command. Precedence:
+ *   1. Explicit --project <names> on the CLI wins (existing behaviour).
+ *   2. Explicit --all-projects opts out of cwd scoping → no filter.
+ *   3. Otherwise: auto-detect git repo root from cwd; if found, use that
+ *      path as a single-element project filter (substring match against
+ *      projectPath). Returns the resolved filter and a `scope` label that
+ *      callers can render in report titles/banners.
+ */
+function resolveProjectScope(opts: { project?: string[]; allProjects?: boolean }): { filter: string[]; scope: { kind: 'explicit' | 'cwd' | 'all'; label: string | null } } {
+  if (opts.project && opts.project.length > 0) {
+    return { filter: opts.project, scope: { kind: 'explicit', label: opts.project.join(', ') } }
   }
-
-  const result = await detectPlans(existing)
-  for (const d of result.detected) {
-    const current = existing[d.provider]
-    // Never overwrite a manual `codeburn plan set` decision with
-    // auto-detect output (autoDetected:false means user-set).
-    if (current && current.autoDetected !== true) continue
-    await savePlan(d.plan)
+  if (opts.allProjects) {
+    return { filter: [], scope: { kind: 'all', label: null } }
   }
-  await recordAutoDetectRun()
-  return result
+  const repoRoot = detectCwdRepoRoot()
+  if (repoRoot) {
+    return { filter: [repoRoot], scope: { kind: 'cwd', label: repoRoot } }
+  }
+  return { filter: [], scope: { kind: 'all', label: null } }
 }
 
 async function hydrateCache() {
@@ -88,7 +86,7 @@ function parseNumber(value: string): number {
 }
 
 function parseInteger(value: string): number {
-  return parseInt(value, 10)
+  return Number.parseInt(value, 10)
 }
 
 type JsonPlanSummary = {
@@ -162,15 +160,215 @@ program.hook('preAction', async (thisCommand) => {
     process.env['CODEBURN_VERBOSE'] = '1'
   }
   await loadCurrency()
-  // Run plan auto-detect once per day. Skipped silently when a plan is
-  // already set; emits no output even when it succeeds (the next status /
-  // report rendering surfaces the new banner). We skip the `plan`
-  // subcommand entirely because the user is explicitly managing config
-  // there — overlapping reads+writes would race against `savePlan`.
-  if (thisCommand.name() !== 'plan') {
-    await autoDetectAndPersist().catch(() => undefined)
-  }
+  // Plan auto-detect was removed in favour of an explicit, uniform
+  // `codeburn plan set --provider <X> <plan>` flow for every supported
+  // tool. See plan-detect.ts.
 })
+
+type ModelMapEntry = { calls: number; cost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
+type CategoryMapEntry = { turns: number; cost: number; editTurns: number; oneShotTurns: number }
+
+function buildDailyMap(sessions: ProjectSummary['sessions']): Record<string, { cost: number; calls: number }> {
+  const dailyMap: Record<string, { cost: number; calls: number }> = {}
+  for (const sess of sessions) {
+    for (const turn of sess.turns) {
+      if (!turn.timestamp) continue
+      const day = dateKey(turn.timestamp)
+      dailyMap[day] ??= { cost: 0, calls: 0 }
+      for (const call of turn.assistantCalls) {
+        dailyMap[day].cost += call.costUSD
+        dailyMap[day].calls += 1
+      }
+    }
+  }
+  return dailyMap
+}
+
+function buildModelMap(sessions: ProjectSummary['sessions']): Record<string, ModelMapEntry> {
+  const modelMap: Record<string, ModelMapEntry> = {}
+  for (const sess of sessions) {
+    for (const [model, d] of Object.entries(sess.modelBreakdown)) {
+      modelMap[model] ??= { calls: 0, cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+      modelMap[model].calls += d.calls
+      modelMap[model].cost += d.costUSD
+      modelMap[model].inputTokens += d.tokens.inputTokens
+      modelMap[model].outputTokens += d.tokens.outputTokens
+      modelMap[model].cacheReadTokens += d.tokens.cacheReadInputTokens
+      modelMap[model].cacheWriteTokens += d.tokens.cacheCreationInputTokens
+    }
+  }
+  return modelMap
+}
+
+function buildCategoryMap(sessions: ProjectSummary['sessions']): Record<string, CategoryMapEntry> {
+  const catMap: Record<string, CategoryMapEntry> = {}
+  for (const sess of sessions) {
+    for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
+      catMap[cat] ??= { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 }
+      catMap[cat].turns += d.turns
+      catMap[cat].cost += d.costUSD
+      catMap[cat].editTurns += d.editTurns
+      catMap[cat].oneShotTurns += d.oneShotTurns
+    }
+  }
+  return catMap
+}
+
+function buildToolMaps(sessions: ProjectSummary['sessions']): { tools: Record<string, number>; mcp: Record<string, number>; bash: Record<string, number> } {
+  const tools: Record<string, number> = {}
+  const mcp: Record<string, number> = {}
+  const bash: Record<string, number> = {}
+  for (const sess of sessions) {
+    for (const [tool, d] of Object.entries(sess.toolBreakdown)) tools[tool] = (tools[tool] ?? 0) + d.calls
+    for (const [server, d] of Object.entries(sess.mcpBreakdown)) mcp[server] = (mcp[server] ?? 0) + d.calls
+    for (const [cmd, d] of Object.entries(sess.bashBreakdown)) bash[cmd] = (bash[cmd] ?? 0) + d.calls
+  }
+  return { tools, mcp, bash }
+}
+
+function sortedCallMap(m: Record<string, number>): Array<{ name: string; calls: number }> {
+  return Object.entries(m).sort(([, a], [, b]) => b - a).map(([name, calls]) => ({ name, calls }))
+}
+
+function buildModelList(modelMap: Record<string, ModelMapEntry>, modelEfficiency: ReturnType<typeof aggregateModelEfficiency>) {
+  return Object.entries(modelMap)
+    .sort(([, a], [, b]) => b.cost - a.cost)
+    .map(([name, { cost, ...rest }]) => {
+      const efficiency = modelEfficiency.get(name)
+      return {
+        name,
+        ...rest,
+        cost: convertCost(cost),
+        editTurns: efficiency?.editTurns ?? 0,
+        oneShotTurns: efficiency?.oneShotTurns ?? 0,
+        oneShotRate: efficiency?.oneShotRate ?? null,
+        retriesPerEdit: efficiency?.retriesPerEdit ?? null,
+        costPerEdit: efficiency?.costPerEditUSD !== null && efficiency?.costPerEditUSD !== undefined
+          ? convertCost(efficiency.costPerEditUSD)
+          : null,
+      }
+    })
+}
+
+function buildActivityList(catMap: Record<string, CategoryMapEntry>) {
+  return Object.entries(catMap)
+    .sort(([, a], [, b]) => b.cost - a.cost)
+    .map(([cat, d]) => ({
+      category: CATEGORY_LABELS[cat as TaskCategory] ?? cat,
+      cost: convertCost(d.cost),
+      turns: d.turns,
+      editTurns: d.editTurns,
+      oneShotTurns: d.oneShotTurns,
+      oneShotRate: d.editTurns > 0 ? Math.round((d.oneShotTurns / d.editTurns) * 1000) / 10 : null,
+    }))
+}
+
+function computeProviderCosts(projects: ProjectSummary[]): ProviderCost[] {
+  const providerCosts = new Map<string, number>()
+  for (const proj of projects) {
+    for (const session of proj.sessions) {
+      for (const turn of session.turns) {
+        for (const call of turn.assistantCalls ?? []) {
+          providerCosts.set(call.provider, (providerCosts.get(call.provider) ?? 0) + call.costUSD)
+        }
+      }
+    }
+  }
+  return Array.from(providerCosts.entries()).map(([name, cost]) => ({ name, cost }))
+}
+
+function buildDailyHistory(days: ReturnType<typeof aggregateProjectsIntoDays>) {
+  return days.map(d => ({
+    date: d.date,
+    cost: d.cost,
+    calls: d.calls,
+    inputTokens: d.inputTokens,
+    outputTokens: d.outputTokens,
+    cacheReadTokens: d.cacheReadTokens,
+    cacheWriteTokens: d.cacheWriteTokens,
+    topModels: Object.entries(d.models).slice(0, 3).map(([n, m]) => ({
+      name: n, cost: m.cost, calls: m.calls,
+      inputTokens: m.inputTokens, outputTokens: m.outputTokens,
+    })),
+  }))
+}
+
+async function computeYieldForScope(
+  projectScope: ReturnType<typeof resolveProjectScope>,
+  customRange: DateRange | null,
+) {
+  try {
+    const { computeYield } = await import('./yield.js')
+    const yieldCwd = projectScope.scope.kind === 'cwd' || projectScope.scope.kind === 'explicit'
+      ? (projectScope.scope.label ?? process.cwd())
+      : process.cwd()
+    return await computeYield(customRange ?? getDateRange('30days').range, yieldCwd)
+  } catch {
+    return null
+  }
+}
+
+type WriteHtmlExportArgs = {
+  periods: PeriodExport[]
+  outputPath: string
+  defaultName: string
+  projectScope: ReturnType<typeof resolveProjectScope>
+  customRange: DateRange | null
+  redactPaths: boolean
+}
+
+async function writeHtmlExport(args: WriteHtmlExportArgs): Promise<string> {
+  const { writeFile } = await import('node:fs/promises')
+  const { buildExportHtml } = await import('./export-html.js')
+  const { detectSpikes } = await import('./anomaly.js')
+  const { basename: pathBasename } = await import('node:path')
+
+  const period = args.periods.at(-1)!
+  const days = aggregateProjectsIntoDays(period.projects)
+  const data = buildPeriodDataFromDays(days, period.label)
+
+  const providers = computeProviderCosts(period.projects)
+  const dailyHistory = buildDailyHistory(days)
+
+  // Pull the user's plan (if set) so the HTML hero section can show
+  // "$200 paid · $X value · Yx leverage" instead of the raw spend.
+  const planRecord = await readPlan().catch(() => undefined)
+  const valuation = planRecord
+    ? computeValuation(data.cost, {
+        id: planRecord.id,
+        displayName: planDisplayName(planRecord.id),
+        monthlyUsd: planRecord.monthlyUsd,
+      })
+    : undefined
+
+  const payload = buildMenubarPayload(data, providers, null, dailyHistory, valuation)
+  const spikes = detectSpikes(dailyHistory.map(d => ({ date: d.date, cost: d.cost })))
+
+  // For the no-plan path, surface providers we know the user uses but
+  // can't auto-detect a tier for.
+  const existingPlans = await readAllPlans()
+  const detection = await detectPlans(existingPlans).catch(() => ({ presenceOnly: [] }))
+
+  const yieldSummary = await computeYieldForScope(args.projectScope, args.customRange)
+
+  const titleScope = args.projectScope.scope.kind === 'cwd' || args.projectScope.scope.kind === 'explicit'
+    ? ` — ${pathBasename(args.projectScope.scope.label ?? '')}`
+    : ''
+
+  const html = buildExportHtml({
+    payload,
+    projects: period.projects,
+    spikes,
+    yieldSummary,
+    presenceOnly: detection.presenceOnly,
+    title: `CodeBurn Report${titleScope} — ${period.label}`,
+    redactPaths: args.redactPaths,
+    scope: args.projectScope.scope,
+  })
+  const finalPath = args.outputPath.endsWith('.html') ? args.outputPath : `${args.defaultName}.html`
+  await writeFile(finalPath, html, 'utf-8')
+  return finalPath
+}
 
 function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: string) {
   const sessions = projects.flatMap(p => p.sessions)
@@ -188,104 +386,22 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   const cacheHitDenom = totalInput + totalCacheRead
   const cacheHitPercent = cacheHitDenom > 0 ? Math.round((totalCacheRead / cacheHitDenom) * 1000) / 10 : 0
 
-  const dailyMap: Record<string, { cost: number; calls: number }> = {}
-  for (const sess of sessions) {
-    for (const turn of sess.turns) {
-      if (!turn.timestamp) { continue }
-      const day = dateKey(turn.timestamp)
-      if (!dailyMap[day]) { dailyMap[day] = { cost: 0, calls: 0 } }
-      for (const call of turn.assistantCalls) {
-        dailyMap[day].cost += call.costUSD
-        dailyMap[day].calls += 1
-      }
-    }
-  }
-  const daily = Object.entries(dailyMap).sort().map(([date, d]) => ({
-    date,
-    cost: convertCost(d.cost),
-    calls: d.calls,
-  }))
+  const daily = Object.entries(buildDailyMap(sessions))
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, d]) => ({ date, cost: convertCost(d.cost), calls: d.calls }))
 
   const projectList = projects.map(p => ({
     name: p.project,
     path: p.projectPath,
     cost: convertCost(p.totalCostUSD),
-    avgCostPerSession: p.sessions.length > 0
-      ? convertCost(p.totalCostUSD / p.sessions.length)
-      : null,
+    avgCostPerSession: p.sessions.length > 0 ? convertCost(p.totalCostUSD / p.sessions.length) : null,
     calls: p.totalApiCalls,
     sessions: p.sessions.length,
   }))
 
-  const modelMap: Record<string, { calls: number; cost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }> = {}
-  const modelEfficiency = aggregateModelEfficiency(projects)
-  for (const sess of sessions) {
-    for (const [model, d] of Object.entries(sess.modelBreakdown)) {
-      if (!modelMap[model]) { modelMap[model] = { calls: 0, cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } }
-      modelMap[model].calls += d.calls
-      modelMap[model].cost += d.costUSD
-      modelMap[model].inputTokens += d.tokens.inputTokens
-      modelMap[model].outputTokens += d.tokens.outputTokens
-      modelMap[model].cacheReadTokens += d.tokens.cacheReadInputTokens
-      modelMap[model].cacheWriteTokens += d.tokens.cacheCreationInputTokens
-    }
-  }
-  const models = Object.entries(modelMap)
-    .sort(([, a], [, b]) => b.cost - a.cost)
-    .map(([name, { cost, ...rest }]) => {
-      const efficiency = modelEfficiency.get(name)
-      return {
-        name,
-        ...rest,
-        cost: convertCost(cost),
-        editTurns: efficiency?.editTurns ?? 0,
-        oneShotTurns: efficiency?.oneShotTurns ?? 0,
-        oneShotRate: efficiency?.oneShotRate ?? null,
-        retriesPerEdit: efficiency?.retriesPerEdit ?? null,
-        costPerEdit: efficiency?.costPerEditUSD !== null && efficiency?.costPerEditUSD !== undefined
-          ? convertCost(efficiency.costPerEditUSD)
-          : null,
-      }
-    })
-
-  const catMap: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
-  for (const sess of sessions) {
-    for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
-      if (!catMap[cat]) { catMap[cat] = { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 } }
-      catMap[cat].turns += d.turns
-      catMap[cat].cost += d.costUSD
-      catMap[cat].editTurns += d.editTurns
-      catMap[cat].oneShotTurns += d.oneShotTurns
-    }
-  }
-  const activities = Object.entries(catMap)
-    .sort(([, a], [, b]) => b.cost - a.cost)
-    .map(([cat, d]) => ({
-      category: CATEGORY_LABELS[cat as TaskCategory] ?? cat,
-      cost: convertCost(d.cost),
-      turns: d.turns,
-      editTurns: d.editTurns,
-      oneShotTurns: d.oneShotTurns,
-      oneShotRate: d.editTurns > 0 ? Math.round((d.oneShotTurns / d.editTurns) * 1000) / 10 : null,
-    }))
-
-  const toolMap: Record<string, number> = {}
-  const mcpMap: Record<string, number> = {}
-  const bashMap: Record<string, number> = {}
-  for (const sess of sessions) {
-    for (const [tool, d] of Object.entries(sess.toolBreakdown)) {
-      toolMap[tool] = (toolMap[tool] ?? 0) + d.calls
-    }
-    for (const [server, d] of Object.entries(sess.mcpBreakdown)) {
-      mcpMap[server] = (mcpMap[server] ?? 0) + d.calls
-    }
-    for (const [cmd, d] of Object.entries(sess.bashBreakdown)) {
-      bashMap[cmd] = (bashMap[cmd] ?? 0) + d.calls
-    }
-  }
-
-  const sortedMap = (m: Record<string, number>) =>
-    Object.entries(m).sort(([, a], [, b]) => b - a).map(([name, calls]) => ({ name, calls }))
+  const models = buildModelList(buildModelMap(sessions), aggregateModelEfficiency(projects))
+  const activities = buildActivityList(buildCategoryMap(sessions))
+  const { tools: toolMap, mcp: mcpMap, bash: bashMap } = buildToolMaps(sessions)
 
   const topSessions = projects
     .flatMap(p => p.sessions.map(s => ({ project: p.project, sessionId: s.sessionId, date: s.firstTimestamp ? dateKey(s.firstTimestamp) : null, cost: convertCost(s.totalCostUSD), calls: s.apiCalls })))
@@ -313,9 +429,9 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     projects: projectList,
     models,
     activities,
-    tools: sortedMap(toolMap),
-    mcpServers: sortedMap(mcpMap),
-    shellCommands: sortedMap(bashMap),
+    tools: sortedCallMap(toolMap),
+    mcpServers: sortedCallMap(mcpMap),
+    shellCommands: sortedCallMap(bashMap),
     topSessions,
   }
 }
@@ -328,8 +444,9 @@ program
   .option('--to <date>', 'End date (YYYY-MM-DD). Overrides --period when set')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: tui, json', 'tui')
-  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--all-projects', 'Show every project regardless of cwd (overrides cwd auto-scoping)')
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'report')
@@ -342,6 +459,7 @@ program
       process.exit(1)
     }
 
+    const projectScope = resolveProjectScope(opts)
     const period = toPeriod(opts.period)
     if (opts.format === 'json') {
       await loadPricing()
@@ -350,18 +468,18 @@ program
         const label = formatDateRangeLabel(opts.from, opts.to)
         const projects = filterProjectsByName(
           await parseAllSessions(customRange, opts.provider),
-          opts.project,
+          projectScope.filter,
           opts.exclude,
         )
         console.log(JSON.stringify(buildJsonReport(projects, label, 'custom'), null, 2))
       } else {
-        await runJsonReport(period, opts.provider, opts.project, opts.exclude)
+        await runJsonReport(period, opts.provider, projectScope.filter, opts.exclude)
       }
       return
     }
     await hydrateCache()
     const customRangeLabel = customRange ? formatDateRangeLabel(opts.from, opts.to) : undefined
-    await renderDashboard(period, opts.provider, opts.refresh, opts.project, opts.exclude, customRange, customRangeLabel)
+    await renderDashboard(period, opts.provider, opts.refresh, projectScope.filter, opts.exclude, customRange, customRangeLabel)
   })
 
 function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
@@ -409,15 +527,17 @@ program
   .description('Compact status output (today + month)')
   .option('--format <format>', 'Output format: terminal, menubar-json, json', 'terminal')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
-  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--all-projects', 'Show every project regardless of cwd (overrides cwd auto-scoping)')
   .option('--period <period>', 'Primary period for menubar-json: today, week, 30days, month, all', 'today')
   .option('--no-optimize', 'Skip optimize findings (menubar-json only, faster)')
   .action(async (opts) => {
     assertFormat(opts.format, ['terminal', 'menubar-json', 'json'], 'status')
     await loadPricing()
     const pf = opts.provider
-    const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)
+    const projectScope = resolveProjectScope(opts)
+    const fp = (p: ProjectSummary[]) => filterProjectsByName(p, projectScope.filter, opts.exclude)
     if (opts.format === 'menubar-json') {
       const periodInfo = getDateRange(opts.period)
       const now = new Date()
@@ -601,17 +721,19 @@ program
   .description('Today\'s usage dashboard')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: tui, json', 'tui')
-  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--all-projects', 'Show every project regardless of cwd (overrides cwd auto-scoping)')
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'today')
+    const projectScope = resolveProjectScope(opts)
     if (opts.format === 'json') {
-      await runJsonReport('today', opts.provider, opts.project, opts.exclude)
+      await runJsonReport('today', opts.provider, projectScope.filter, opts.exclude)
       return
     }
     await hydrateCache()
-    await renderDashboard('today', opts.provider, opts.refresh, opts.project, opts.exclude)
+    await renderDashboard('today', opts.provider, opts.refresh, projectScope.filter, opts.exclude)
   })
 
 program
@@ -619,17 +741,19 @@ program
   .description('This month\'s usage dashboard')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: tui, json', 'tui')
-  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--all-projects', 'Show every project regardless of cwd (overrides cwd auto-scoping)')
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'month')
+    const projectScope = resolveProjectScope(opts)
     if (opts.format === 'json') {
-      await runJsonReport('month', opts.provider, opts.project, opts.exclude)
+      await runJsonReport('month', opts.provider, projectScope.filter, opts.exclude)
       return
     }
     await hydrateCache()
-    await renderDashboard('month', opts.provider, opts.refresh, opts.project, opts.exclude)
+    await renderDashboard('month', opts.provider, opts.refresh, projectScope.filter, opts.exclude)
   })
 
 program
@@ -640,15 +764,22 @@ program
   .option('--from <date>', 'Start date (YYYY-MM-DD). Exports a single custom period when set')
   .option('--to <date>', 'End date (YYYY-MM-DD). Exports a single custom period when set')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
-  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--all-projects', 'Show every project regardless of cwd (overrides cwd auto-scoping)')
   .option('--redact-paths', 'Replace absolute project paths with salted hashes (safe to share)')
   .action(async (opts) => {
     assertFormat(opts.format, ['csv', 'json', 'html'], 'export')
     await loadPricing()
     await hydrateCache()
     const pf = opts.provider
-    const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)
+    // Resolve the effective project scope: explicit --project wins, then
+    // --all-projects opts out, then auto-detect from cwd. The yield panel
+    // already scoped to cwd; this propagates the same scope to hero stats,
+    // calendar, daily timeline, donuts, and per-project breakdown so the
+    // report is internally consistent (issue surfaced by user testing).
+    const projectScope = resolveProjectScope(opts)
+    const fp = (p: ProjectSummary[]) => filterProjectsByName(p, projectScope.filter, opts.exclude)
     let customRange: DateRange | null = null
     try {
       customRange = parseDateRangeFlags(opts.from, opts.to)
@@ -683,89 +814,14 @@ program
       if (opts.format === 'json') {
         savedPath = await exportJson(periods, outputPath)
       } else if (opts.format === 'html') {
-        const { writeFile } = await import('fs/promises')
-        const { buildExportHtml } = await import('./export-html.js')
-        const { detectSpikes } = await import('./anomaly.js')
-        const period = periods[periods.length - 1]
-        const days = aggregateProjectsIntoDays(period.projects)
-        const data = buildPeriodDataFromDays(days, period.label)
-
-        // Build provider distribution from this period's project data
-        // (each ClassifiedTurn carries the per-provider assistantCalls).
-        const providerCosts = new Map<string, number>()
-        for (const proj of period.projects) {
-          for (const session of proj.sessions) {
-            for (const turn of session.turns) {
-              for (const call of turn.assistantCalls ?? []) {
-                providerCosts.set(call.provider, (providerCosts.get(call.provider) ?? 0) + call.costUSD)
-              }
-            }
-          }
-        }
-        const providers: ProviderCost[] = Array.from(providerCosts.entries())
-          .map(([name, cost]) => ({ name, cost }))
-
-        // Daily history: cost+calls+tokens per day for the timeline chart.
-        const dailyHistory = days.map(d => ({
-          date: d.date,
-          cost: d.cost,
-          calls: d.calls,
-          inputTokens: d.inputTokens,
-          outputTokens: d.outputTokens,
-          cacheReadTokens: d.cacheReadTokens,
-          cacheWriteTokens: d.cacheWriteTokens,
-          topModels: Object.entries(d.models).slice(0, 3).map(([n, m]) => ({
-            name: n, cost: m.cost, calls: m.calls,
-            inputTokens: m.inputTokens, outputTokens: m.outputTokens,
-          })),
-        }))
-
-        // Pull the user's plan (if set) so the HTML hero section can show
-        // "$200 paid · $X value · Yx leverage" instead of the misleading
-        // raw "spend" number.
-        const planRecord = await readPlan().catch(() => undefined)
-        const valuation = planRecord
-          ? computeValuation(data.cost, {
-              id: planRecord.id,
-              displayName: planDisplayName(planRecord.id),
-              monthlyUsd: planRecord.monthlyUsd,
-            })
-          : undefined
-
-        const payload = buildMenubarPayload(data, providers, null, dailyHistory, valuation)
-        const spikes = detectSpikes(dailyHistory.map(d => ({ date: d.date, cost: d.cost })))
-
-        // For the no-plan path, surface providers we know the user uses but
-        // can't auto-detect a tier for (Cursor / Codex / Copilot / Kiro).
-        // Pay-as-you-go API users see no banner — current behavior is correct
-        // for them.
-        const existingPlans = await readAllPlans()
-        const detection = await detectPlans(existingPlans).catch(() =>
-          ({ detected: [], presenceOnly: [] }))
-
-        // Yield analysis is best-effort: needs git access in the user's cwd
-        // and skips silently if cwd isn't a git repo.
-        let yieldSummary = null
-        try {
-          const { computeYield } = await import('./yield.js')
-          yieldSummary = await computeYield(
-            customRange ?? getDateRange('30days').range,
-            process.cwd(),
-          )
-        } catch { /* git unavailable, skip */ }
-
-        const html = buildExportHtml({
-          payload,
-          projects: period.projects,
-          spikes,
-          yieldSummary,
-          presenceOnly: detection.presenceOnly,
-          title: `CodeBurn Report — ${period.label}`,
+        savedPath = await writeHtmlExport({
+          periods,
+          outputPath,
+          defaultName,
+          projectScope,
+          customRange,
           redactPaths: !!opts.redactPaths,
         })
-        const finalPath = outputPath.endsWith('.html') ? outputPath : `${defaultName}.html`
-        await writeFile(finalPath, html, 'utf-8')
-        savedPath = finalPath
       } else {
         savedPath = await exportCsv(periods, outputPath)
       }

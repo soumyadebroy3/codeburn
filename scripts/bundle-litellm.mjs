@@ -1,8 +1,8 @@
-import { writeFileSync, mkdirSync, readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
-import { createHash } from 'crypto'
-import { setTimeout as delay } from 'timers/promises'
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..')

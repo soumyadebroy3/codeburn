@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtemp, writeFile, rm } from 'fs/promises'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   MAX_SESSION_FILE_BYTES,
@@ -92,7 +92,14 @@ describe('readSessionLines', () => {
     const content = Array.from({ length: 1000 }, (_, i) => `line-${i}`).join('\n')
     const p = await tmpPath(content)
     const gen = readSessionLines(p)
-    await gen.next()
-    await gen.return(undefined)
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toBe('line-0')
+    // Abandoning the generator must close the underlying fd. If it didn't,
+    // the surrounding test process would eventually exhaust file descriptors;
+    // we can't directly probe rlimit but a clean .return() resolving without
+    // throwing is the contract.
+    const closed = await gen.return(undefined)
+    expect(closed.done).toBe(true)
   })
 })

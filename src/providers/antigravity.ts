@@ -1,9 +1,9 @@
-import { readdir, readFile, mkdir, stat, open, rename, unlink } from 'fs/promises'
-import { execFile } from 'child_process'
-import { randomBytes } from 'crypto'
-import { basename, join } from 'path'
-import { homedir } from 'os'
-import https from 'https'
+import { readdir, readFile, mkdir, stat, open, rename, unlink } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
+import https from 'node:https'
 
 import { calculateCost } from '../models.js'
 import { warn } from '../fs-utils.js'
@@ -154,8 +154,10 @@ async function flushCache(liveCascadeIds?: Set<string>): Promise<void> {
 async function detectServer(): Promise<ServerInfo | null> {
   if (cachedServer !== undefined) return cachedServer
   try {
+    // Use the absolute /bin/ps path so a hostile entry on PATH can't
+    // shadow `ps` and exfiltrate process info or return forged output.
     const output = await new Promise<string>((resolve, reject) => {
-      execFile('ps', ['-eo', 'args'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
+      execFile('/bin/ps', ['-eo', 'args'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
         if (err) reject(err)
         else resolve(stdout)
       })
@@ -167,7 +169,7 @@ async function detectServer(): Promise<ServerInfo | null> {
       const csrfMatch = line.match(/--csrf_token\s+([0-9a-f-]{32,})/)
       const portMatch = line.match(/--https_server_port\s+(\d+)/)
       if (csrfMatch && portMatch) {
-        cachedServer = { csrfToken: csrfMatch[1]!, port: parseInt(portMatch[1]!, 10) }
+        cachedServer = { csrfToken: csrfMatch[1]!, port: Number.parseInt(portMatch[1]!, 10) }
         return cachedServer
       }
     }
@@ -324,10 +326,10 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         const usage = entry.chatModel?.usage
         if (!usage) continue
 
-        const inputTokens = parseInt(usage.inputTokens ?? '0', 10)
-        const outputTokens = parseInt(usage.outputTokens ?? '0', 10)
-        const thinkingTokens = parseInt(usage.thinkingOutputTokens ?? '0', 10)
-        const responseTokens = parseInt(usage.responseOutputTokens ?? '0', 10)
+        const inputTokens = Number.parseInt(usage.inputTokens ?? '0', 10)
+        const outputTokens = Number.parseInt(usage.outputTokens ?? '0', 10)
+        const thinkingTokens = Number.parseInt(usage.thinkingOutputTokens ?? '0', 10)
+        const responseTokens = Number.parseInt(usage.responseOutputTokens ?? '0', 10)
 
         if (inputTokens === 0 && outputTokens === 0) continue
 

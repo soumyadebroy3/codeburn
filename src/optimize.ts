@@ -1,8 +1,8 @@
 import chalk from 'chalk'
-import { readdir, stat } from 'fs/promises'
-import { existsSync, statSync } from 'fs'
-import { basename, join, resolve, sep } from 'path'
-import { homedir, tmpdir } from 'os'
+import { readdir, stat } from 'node:fs/promises'
+import { existsSync, statSync } from 'node:fs'
+import { basename, join, resolve, sep } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 
 import { readSessionLines, readSessionFileSync } from './fs-utils.js'
 import { discoverAllSessions } from './providers/index.js'
@@ -434,7 +434,7 @@ export function loadMcpConfigs(projectCwds: Iterable<string>): Map<string, McpCo
     try { mtime = statSync(p).mtimeMs } catch {}
     const serversObj = (config.mcpServers ?? {}) as Record<string, unknown>
     for (const name of Object.keys(serversObj)) {
-      const normalized = name.replace(/:/g, '_')
+      const normalized = name.replaceAll(':', '_')
       const existing = servers.get(normalized)
       if (!existing || existing.mtime < mtime) {
         servers.set(normalized, { normalized, original: name, mtime })
@@ -677,7 +677,7 @@ export function aggregateMcpCoverage(projects: ProjectSummary[]): McpServerCover
     for (const fqn of acc.invokedTools) {
       if (acc.inventory.has(fqn)) invokedInInventory.add(fqn)
     }
-    const unusedTools = Array.from(acc.inventory).filter(t => !invokedInInventory.has(t)).sort()
+    const unusedTools = Array.from(acc.inventory).filter(t => !invokedInInventory.has(t)).sort((a, b) => a.localeCompare(b))
     const toolsInvoked = acc.inventory.size - unusedTools.length
     result.push({
       server,
@@ -1099,7 +1099,7 @@ export function detectCacheBloat(apiCalls: ApiCallMeta[], projects: ProjectSumma
   let versionNote = ''
   if (versionAvgs.length >= 2) {
     const [high, ...rest] = versionAvgs
-    const low = rest[rest.length - 1]
+    const low = rest.at(-1)!
     if (high.avg - low.avg > CACHE_VERSION_DIFF_THRESHOLD) {
       versionNote = ` Version ${high.version} averages ${formatTokens(high.avg)} vs ${low.version} at ${formatTokens(low.avg)}.`
     }
@@ -1238,7 +1238,7 @@ function readShellProfileLimit(): number | null {
     const content = readSessionFileSync(path)
     if (content === null) continue
     const match = content.match(/^\s*export\s+BASH_MAX_OUTPUT_LENGTH\s*=\s*['"]?(\d+)['"]?/m)
-    if (match) return parseInt(match[1], 10)
+    if (match) return Number.parseInt(match[1], 10)
   }
   return null
 }
@@ -1246,7 +1246,7 @@ function readShellProfileLimit(): number | null {
 export function detectBashBloat(): WasteFinding | null {
   const profileLimit = readShellProfileLimit()
   const envLimit = process.env['BASH_MAX_OUTPUT_LENGTH']
-  const configured = profileLimit ?? (envLimit ? parseInt(envLimit, 10) : null)
+  const configured = profileLimit ?? (envLimit ? Number.parseInt(envLimit, 10) : null)
 
   if (configured !== null && configured <= BASH_RECOMMENDED_LIMIT) return null
 
@@ -1873,11 +1873,12 @@ function renderOptimize(
   lines.push(chalk.hex(DIM)('  ' + SEP.repeat(PANEL_WIDTH)))
 
   const issueSuffix = findings.length > 0 ? `, ${findings.length} issue${findings.length > 1 ? 's' : ''}` : ''
+  const healthDetail = ` (${healthScore}/100${issueSuffix})`
   lines.push('  ' + [
     `${sessionCount} sessions`,
     `${callCount.toLocaleString()} calls`,
     chalk.hex(GOLD)(formatCost(periodCost)),
-    `Health: ${chalk.bold.hex(GRADE_COLORS[healthGrade])(healthGrade)}${chalk.dim(` (${healthScore}/100${issueSuffix})`)}`,
+    `Health: ${chalk.bold.hex(GRADE_COLORS[healthGrade])(healthGrade)}${chalk.dim(healthDetail)}`,
   ].join(chalk.hex(DIM)('   ')))
   lines.push('')
 

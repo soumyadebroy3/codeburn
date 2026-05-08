@@ -1,7 +1,5 @@
-import { execFileSync } from 'child_process'
-import { resolve, sep } from 'path'
-import { homedir, tmpdir } from 'os'
 import { parseAllSessions } from './parser.js'
+import { SAFE_GIT_ARGS, safeGitEnv, isCwdAllowed, safeRunGit } from './git-safe.js'
 import type { DateRange, SessionSummary } from './types.js'
 
 export type YieldCategory = 'productive' | 'reverted' | 'abandoned'
@@ -24,79 +22,7 @@ export type YieldSummary = {
 
 const SAFE_REF_PATTERN = /^[A-Za-z0-9._/\-]+$/
 
-// Neutralize per-repo config keys that git happily executes as commands when
-// it discovers them in a `.git/config`. A malicious session JSONL can drop
-// `entry.cwd` pointing at a directory whose `.git/config` sets these keys —
-// without these `-c` overrides, `git` invocations below run attacker code.
-// (CVE-2022-24765 / CVE-2024-32002 family.)
-const SAFE_GIT_ARGS: readonly string[] = [
-  '-c', 'core.fsmonitor=',
-  '-c', 'core.sshCommand=',
-  '-c', 'core.pager=cat',
-  '-c', 'protocol.version=2',
-  '-c', 'safe.directory=*',
-]
-
-function safeGitEnv(): NodeJS.ProcessEnv {
-  // Strip every GIT_* variable from the inherited env, then add only the ones
-  // we want git to see. This defeats `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*`
-  // injection from the parent shell.
-  const env: NodeJS.ProcessEnv = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('GIT_')) continue
-    env[k] = v
-  }
-  env.GIT_CONFIG_GLOBAL = '/dev/null'
-  env.GIT_CONFIG_SYSTEM = '/dev/null'
-  env.GIT_CONFIG_NOSYSTEM = '1'
-  env.GIT_OPTIONAL_LOCKS = '0'
-  env.GIT_TERMINAL_PROMPT = '0'
-  env.GIT_PAGER = 'cat'
-  return env
-}
-
-// Confine git invocations to user-writable roots ($HOME, $TMPDIR, plus any
-// CODEBURN_ALLOWED_PROJECT_ROOTS). `entry.cwd` from session JSONL is
-// otherwise an arbitrary-path primitive.
-function trustedRoots(): string[] {
-  const roots: string[] = [resolve(homedir()), resolve(tmpdir())]
-  const extra = process.env.CODEBURN_ALLOWED_PROJECT_ROOTS
-  if (extra) {
-    for (const r of extra.split(':')) {
-      if (r) roots.push(resolve(r))
-    }
-  }
-  return roots
-}
-
-function isCwdAllowed(dir: string): boolean {
-  let resolved: string
-  try {
-    resolved = resolve(dir)
-  } catch {
-    return false
-  }
-  for (const root of trustedRoots()) {
-    if (resolved === root || resolved.startsWith(root + sep)) return true
-  }
-  return false
-}
-
-function runGit(args: string[], cwd: string): string | null {
-  if (!isCwdAllowed(cwd)) return null
-  try {
-    return execFileSync('git', [...SAFE_GIT_ARGS, ...args], {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: safeGitEnv(),
-      timeout: 10_000,
-      maxBuffer: 64 * 1024 * 1024,
-    }).trim()
-  } catch {
-    return null
-  }
-}
+const runGit = safeRunGit
 
 function isGitRepo(dir: string): boolean {
   if (!isCwdAllowed(dir)) return false

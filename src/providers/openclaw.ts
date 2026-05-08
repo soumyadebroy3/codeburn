@@ -1,6 +1,6 @@
-import { readdir, readFile } from 'fs/promises'
-import { basename, join, resolve, sep } from 'path'
-import { homedir } from 'os'
+import { readdir, readFile } from 'node:fs/promises'
+import { basename, join, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
 
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'

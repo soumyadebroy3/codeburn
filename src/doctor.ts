@@ -5,9 +5,9 @@
  * is "fail"; "warn" is non-fatal but printed.
  */
 
-import { stat } from 'fs/promises'
-import { homedir } from 'os'
-import { join } from 'path'
+import { stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 type CheckStatus = 'pass' | 'warn' | 'fail'
 type Check = { name: string; status: CheckStatus; detail: string }
@@ -16,7 +16,7 @@ const MIN_NODE_MAJOR = 22
 
 function nodeMajor(): number {
   const m = process.versions.node.match(/^(\d+)/)
-  return m ? parseInt(m[1], 10) : 0
+  return m ? Number.parseInt(m[1], 10) : 0
 }
 
 async function checkNode(): Promise<Check> {

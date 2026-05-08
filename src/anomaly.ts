@@ -32,9 +32,16 @@ export type SpikeOptions = {
   halfLife: number
   /** Threshold multiplier on MAD. 3 = ~99th percentile under Gaussian noise. */
   k: number
+  /**
+   * Absolute USD floor. Any day whose cost is below this value will never be
+   * flagged as a spike, regardless of how anomalous it is in z-score terms.
+   * Defaults to $5 — relative-only triggering produced absurd findings like
+   * "$1 day after 14 quiet days = extreme spike".
+   */
+  minCost: number
 }
 
-const DEFAULTS: SpikeOptions = { window: 14, halfLife: 7, k: 3 }
+const DEFAULTS: SpikeOptions = { window: 14, halfLife: 7, k: 3, minCost: 5 }
 
 function median(xs: number[]): number {
   if (xs.length === 0) return 0
@@ -47,7 +54,16 @@ function mad(xs: number[]): number {
   if (xs.length === 0) return 0
   const m = median(xs)
   const dev = xs.map(x => Math.abs(x - m))
-  return median(dev) || 1e-9   // floor to avoid divide-by-zero on flat input
+  const rawMad = median(dev)
+  // Flooring MAD to a near-zero constant (1e-9) used to produce absurd
+  // z-scores for low-baseline windows: 14 quiet days followed by a $1
+  // recovery would compute z ≈ 6.7e8 and flag the day as "extreme". Floor
+  // instead to whichever is largest of the actual MAD, 10% of the data
+  // median, or $0.01 — so a tiny absolute spike off a tiny baseline reads
+  // as a tiny z-score, not an extreme one.
+  const dataMedian = m
+  const floor = Math.max(dataMedian * 0.1, 0.01)
+  return Math.max(rawMad, floor)
 }
 
 function ewma(values: number[], halfLife: number): number {
@@ -77,6 +93,10 @@ export function detectSpikes(
     const m = mad(window)
     const today = sorted[i]
     if (today.cost <= baseline) continue
+    // Absolute-cost floor: a $1 day after a quiet stretch will mathematically
+    // look like an "extreme" relative spike (infinite ratio off a $0
+    // baseline) but is operationally meaningless. Skip below the floor.
+    if (today.cost < opts.minCost) continue
     const zScore = (today.cost - baseline) / (m * 1.4826)  // MAD→σ conversion
     if (zScore < opts.k) continue
     const ratio = baseline > 0 ? Math.min(100, today.cost / baseline) : 100

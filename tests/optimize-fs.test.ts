@@ -1,12 +1,12 @@
 import { describe, it, expect, afterAll, beforeEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as fsUtils from '../src/fs-utils.js'
 
 vi.mock('os', async () => {
-  const actual = await vi.importActual<typeof import('os')>('os')
-  const fs = await vi.importActual<typeof import('fs')>('fs')
+  const actual = await vi.importActual<typeof import('node:os')>('os')
+  const fs = await vi.importActual<typeof import('node:fs')>('fs')
   const fakeHome = fs.mkdtempSync(actual.tmpdir() + '/codeburn-home-')
   fs.mkdirSync(fakeHome + '/.claude', { recursive: true })
   process.env['CODEBURN_TEST_FAKE_HOME'] = fakeHome

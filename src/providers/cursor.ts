@@ -1,6 +1,6 @@
-import { existsSync, statSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
+import { existsSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import { calculateCost } from '../models.js'
 import { readCachedResults, writeCachedResults } from '../cursor-cache.js'
@@ -371,7 +371,6 @@ function parseAgentKv(db: SqliteDatabase, seenKeys: Set<string>, dbPath: string)
 
   const sessions: Map<string, { inputChars: number; outputChars: number; model: string | null; userText: string }> = new Map()
   let currentRequestId = 'unknown'
-  let turnIndex = 0
 
   for (const row of rows) {
     if (!row.role || !row.content) continue
@@ -394,7 +393,6 @@ function parseAgentKv(db: SqliteDatabase, seenKeys: Set<string>, dbPath: string)
     const requestId = row.request_id ?? currentRequestId
     if (requestId !== currentRequestId) {
       currentRequestId = requestId
-      turnIndex = 0
     }
 
     const textLength = plainTextLength || extractTextLength(content)

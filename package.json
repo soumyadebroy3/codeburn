@@ -15,7 +15,8 @@
     "build": "node scripts/bundle-litellm.mjs && tsup",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "coverage": "vitest run --coverage --coverage.reporter=lcov --coverage.reporter=text-summary"
   },
   "keywords": [
     "claude-code",
@@ -52,6 +53,7 @@
   "devDependencies": {
     "@types/node": "^22.19.17",
     "@types/react": "^19.2.14",
+    "@vitest/coverage-v8": "^3.2.4",
     "tsup": "^8.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
