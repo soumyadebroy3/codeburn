@@ -3,7 +3,7 @@ import { formatUSD } from '../format'
 
 type Props = { data: ReportData | null }
 
-export function ActivityPanel({ data }: Props) {
+export function ActivityPanel({ data }: Props) {
   if (!data || data.activities.length === 0) return null
   const top = data.activities.slice(0, 8)
   const max = Math.max(...top.map(a => a.cost), 1)

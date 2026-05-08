@@ -3,7 +3,7 @@ import { formatUSD } from '../format'
 
 type Props = { data: ReportData | null; loading: boolean }
 
-export function TopHeader({ data, loading }: Props) {
+export function TopHeader({ data, loading }: Props) {
   return (
     <header className="hdr">
       <div className="hdr-brand">

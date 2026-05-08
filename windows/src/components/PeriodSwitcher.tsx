@@ -9,7 +9,7 @@ const PERIODS: Array<{ key: Period; label: string }> = [
   { key: 'all', label: 'All' },
 ]
 
-export function PeriodSwitcher() {
+export function PeriodSwitcher() {
   const { period } = useStore()
   return (
     <nav className="period-tabs">

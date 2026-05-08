@@ -3,7 +3,7 @@ import type { ReportData } from '../types'
 
 type Props = { data: ReportData | null }
 
-export function Footer({ data }: Props) {
+export function Footer({ data }: Props) {
   return (
     <footer className="ftr">
       <span className="ftr-currency">{data?.currency ?? 'USD'}</span>
