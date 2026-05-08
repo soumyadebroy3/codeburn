@@ -9,8 +9,8 @@
     "  4. Paste it into `expectedSha256`",
     "  5. Run `npm run build` and inspect the diff in src/data/litellm-snapshot.json"
   ],
-  "commitSha": "main",
-  "expectedSha256": null,
+  "commitSha": "fa81017e121c329c38c12f0d5a8d14180825dca8",
+  "expectedSha256": "488075e6e9cae47b942fc3a1158b6b065722905c4afb18e2122c78dead0a83df",
   "minEntries": 200,
   "maxEntries": 50000
 }

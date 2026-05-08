@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/providers.png" alt="CodeBurn" width="520" />
+  <img src="https://raw.githubusercontent.com/soumyadebroy3/codeburn/main/assets/providers.png" alt="CodeBurn" width="520" />
 </p>
 
 <p align="center"><strong>See where your AI coding tokens go.</strong></p>
@@ -7,8 +7,8 @@
 <p align="center">                                                                                                                                                                          
     <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/v/codeburn.svg" alt="npm version" /></a>
     <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/dt/codeburn.svg" alt="total downloads" /></a>                                                       
-    <a href="https://github.com/getagentseal/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/codeburn.svg" alt="license" /></a>                                            
-    <a href="https://github.com/getagentseal/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="node version" /></a>                                        
+    <a href="https://github.com/soumyadebroy3/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/codeburn.svg" alt="license" /></a>                                            
+    <a href="https://github.com/soumyadebroy3/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="node version" /></a>                                        
     <a href="https://discord.gg/pJ2DMWvtAx"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>                                     
     <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa?logo=github" alt="Sponsor" /></a>                                                  
   </p> 
@@ -23,16 +23,16 @@ Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads sessi
 <td align="center"><strong>Menu Bar</strong></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/dashboard.jpg" alt="CodeBurn TUI dashboard" width="440" /></td>
-<td><img src="https://cdn.jsdelivr.net/gh/getagentseal/codeburn@main/assets/menubar-0.8.0.png" alt="CodeBurn macOS menubar" width="440" /></td>
+<td><img src="https://raw.githubusercontent.com/soumyadebroy3/codeburn/main/assets/dashboard.jpg" alt="CodeBurn TUI dashboard" width="440" /></td>
+<td><img src="https://cdn.jsdelivr.net/gh/soumyadebroy3/codeburn@main/assets/menubar-0.8.0.png" alt="CodeBurn macOS menubar" width="440" /></td>
 </tr>
 <tr>
 <td align="center"><strong>Optimize</strong></td>
 <td align="center"><strong>Compare</strong></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/optimize.jpg" alt="CodeBurn optimize" width="440" /></td>
-<td><img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/compare.jpg" alt="CodeBurn compare" width="440" /></td>
+<td><img src="https://raw.githubusercontent.com/soumyadebroy3/codeburn/main/assets/optimize.jpg" alt="CodeBurn optimize" width="440" /></td>
+<td><img src="https://raw.githubusercontent.com/soumyadebroy3/codeburn/main/assets/compare.jpg" alt="CodeBurn compare" width="440" /></td>
 </tr>
 </table>
 
@@ -45,22 +45,21 @@ Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads sessi
 ## Install
 
 ```bash
-npm install -g codeburn
+npm install -g @soumyadebroy3/codeburn
 ```
 
 Or with Homebrew:
 
 ```bash
-brew tap getagentseal/codeburn
+brew tap soumyadebroy3/codeburn
 brew install codeburn
 ```
 
-Or run directly without installing:
+The binary is `codeburn` once installed. Or run directly without installing:
 
 ```bash
-npx codeburn
-bunx codeburn
-dx codeburn
+npx @soumyadebroy3/codeburn
+bunx @soumyadebroy3/codeburn
 ```
 
 ## Usage
@@ -110,7 +109,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | Goose | `~/.local/share/goose/sessions/sessions.db` (SQLite) | Yes |
 | Antigravity | `~/.gemini/antigravity/conversations/` | Yes |
 
-Paths shown are for macOS. Linux and Windows equivalents are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/getagentseal/codeburn/issues).
+Paths shown are for macOS. Linux and Windows equivalents are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/soumyadebroy3/codeburn/issues).
 
 CodeBurn auto-detects which AI coding tools you use. If multiple providers have session data on disk, press `p` in the dashboard to toggle between them.
 
@@ -423,11 +422,11 @@ src/
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=getagentseal%2Fcodeburn&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=soumyadebroy3%2Fcodeburn&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=getagentseal/codeburn&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=getagentseal/codeburn&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=getagentseal/codeburn&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=soumyadebroy3/codeburn&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=soumyadebroy3/codeburn&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=soumyadebroy3/codeburn&type=date&legend=top-left" />
  </picture>
 </a>
 

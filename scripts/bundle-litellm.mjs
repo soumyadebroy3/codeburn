@@ -54,7 +54,7 @@ async function fetchWithTimeout(url, ms = 30_000) {
     return await fetch(url, {
       signal: ctrl.signal,
       headers: {
-        'User-Agent': 'codeburn-bundle-litellm (+https://github.com/getagentseal/codeburn)',
+        'User-Agent': 'codeburn-bundle-litellm (+https://github.com/soumyadebroy3/codeburn)',
         'Accept': 'application/json',
       },
     })

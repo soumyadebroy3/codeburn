@@ -126,7 +126,7 @@ function warnUnrecognizedOpenCodeSchemaOnce(missing: string[]): void {
   warnedOpenCodeSchemas.add(key)
   process.stderr.write(
     `codeburn: OpenCode database is missing expected tables (${missing.join(', ')}). ` +
-    `Run OpenCode once to apply migrations, or report at https://github.com/getagentseal/codeburn/issues if this persists on a current OpenCode install.\n`
+    `Run OpenCode once to apply migrations, or report at https://github.com/soumyadebroy3/codeburn/issues if this persists on a current OpenCode install.\n`
   )
 }
 

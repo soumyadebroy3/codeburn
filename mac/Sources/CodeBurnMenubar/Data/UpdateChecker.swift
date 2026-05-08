@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-private let releasesAPI = "https://api.github.com/repos/getagentseal/codeburn/releases/latest"
+private let releasesAPI = "https://api.github.com/repos/soumyadebroy3/codeburn/releases/latest"
 private let checkIntervalSeconds: TimeInterval = 2 * 24 * 60 * 60
 private let lastCheckKey = "UpdateChecker.lastCheckDate"
 private let cachedVersionKey = "UpdateChecker.latestVersion"

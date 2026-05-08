@@ -82,7 +82,7 @@
 ## 0.9.5 - 2026-05-01
 
 ### Added (CLI)
-- **Homebrew tap.** `brew tap getagentseal/codeburn && brew install codeburn`.
+- **Homebrew tap.** `brew tap soumyadebroy3/codeburn && brew install codeburn`.
 - **GPT-5.3 and DeepSeek display names.** GPT-5.3, DeepSeek Coder, DeepSeek Coder Max, DeepSeek R1.
 
 ### Fixed (macOS menubar)
@@ -244,7 +244,7 @@
 - `--no-cache` flag on `report`, `today`, `month`, `status`, `export`, `optimize`, and `compare`. The flag existed to bypass the persistent source cache which no longer exists. If your scripts pass `--no-cache`, drop it; the parse runs fresh every time now.
 
 ### Notes
-- 0.8.2, 0.8.3, and 0.8.4 on npm contain the buggy cache. Upgrade with `npm i -g codeburn@latest` or `npm i -g codeburn@0.8.5`.
+- 0.8.2, 0.8.3, and 0.8.4 on npm contain the buggy cache. Upgrade with `npm i -g @soumyadebroy3/codeburn@latest` or `npm i -g @soumyadebroy3/codeburn@0.8.5`.
 - This release uses a full reparse on every invocation, matching v0.8.1 behavior. On large corpora (5,000+ session files) expect 3 to 10 seconds per invocation. An incremental refresh design that preserves correctness is planned for a follow-up release.
 
 ## 0.8.0 - 2026-04-19

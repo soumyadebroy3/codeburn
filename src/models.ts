@@ -324,7 +324,7 @@ export function calculateCost(
       const safeName = model.replaceAll(/[\x00-\x1F\x7F-\x9F]/g, '?').slice(0, 200)
       process.stderr.write(
         `codeburn: no pricing data for model "${safeName}" — costs for this model will show $0. ` +
-        `Update with: npx codeburn@latest, or report at https://github.com/getagentseal/codeburn/issues.\n`
+        `Update with: npx @soumyadebroy3/codeburn@latest, or report at https://github.com/soumyadebroy3/codeburn/issues.\n`
       )
     }
     return 0

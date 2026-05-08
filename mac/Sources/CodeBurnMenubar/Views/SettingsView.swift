@@ -356,8 +356,8 @@ private struct AboutSettingsTab: View {
                 .font(.codeMono(size: 11))
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                Link("GitHub", destination: URL(string: "https://github.com/getagentseal/codeburn")!)
-                Link("Issues", destination: URL(string: "https://github.com/getagentseal/codeburn/issues")!)
+                Link("GitHub", destination: URL(string: "https://github.com/soumyadebroy3/codeburn")!)
+                Link("Issues", destination: URL(string: "https://github.com/soumyadebroy3/codeburn/issues")!)
             }
             .font(.system(size: 12))
         }
