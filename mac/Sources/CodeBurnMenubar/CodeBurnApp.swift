@@ -61,8 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
         ProcessInfo.processInfo.disableSuddenTermination()
         backgroundActivity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .automaticTerminationDisabled, .suddenTerminationDisabled],
-            reason: "CodeBurn menubar polls AI coding cost every 30 seconds while idle in the background."
+            options: [.automaticTerminationDisabled, .suddenTerminationDisabled],
+            reason: "CodeBurn menubar background refresh"
         )
 
         restorePersistedCurrency()
@@ -293,9 +293,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 let sinceLast = Date().timeIntervalSince(self.lastRefreshTime)
                 if sinceLast >= 5 {
                     if self.store.selectedPeriod != .today || self.store.selectedProvider != .all {
-                        await self.store.refreshQuietly(period: .today)
+                        async let quiet: Void = self.store.refreshQuietly(period: .today)
+                        async let main: Void = self.store.refresh(includeOptimize: false, force: true)
+                        _ = await (quiet, main)
+                    } else {
+                        await self.store.refresh(includeOptimize: false, force: true)
                     }
-                    await self.store.refresh(includeOptimize: false, force: true)
                     self.lastRefreshTime = Date()
                     self.refreshStatusButton()
                 }
