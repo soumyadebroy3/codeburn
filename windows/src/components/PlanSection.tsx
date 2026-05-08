@@ -1,7 +1,7 @@
 import type { ReportData } from '../types'
 import { formatUSD } from '../format'
 
-type Props = { data: ReportData | null }
+type Props = Readonly<{ data: ReportData | null }>
 
 // Lightweight version of the Swift PlanSection — just the headline numbers
 // plus a single progress bar. Capacity-estimator + 5h-window + 7-day-Sonnet

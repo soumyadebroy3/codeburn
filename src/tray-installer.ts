@@ -78,7 +78,10 @@ async function verifyChecksum(archivePath: string, checksumUrl: string): Promise
     throw new Error(`Checksum download failed: HTTP ${response.status}`)
   }
   const text = await response.text()
-  const expected = text.trim().split(/\s+/)[0]!.toLowerCase()
+  // String.split always returns a non-empty array, so [0] is defined; no
+  // non-null assertion needed.
+  const [head = ''] = text.trim().split(/\s+/)
+  const expected = head.toLowerCase()
   const fileBytes = await readFile(archivePath)
   const actual = createHash('sha256').update(fileBytes).digest('hex')
   if (actual !== expected) {
@@ -99,7 +102,11 @@ async function downloadToFile(url: string, destPath: string): Promise<void> {
   if (!response.ok || response.body === null) {
     throw new Error(`Download failed: HTTP ${response.status}`)
   }
-  const nodeStream = Readable.fromWeb(response.body as never)
+  // `as never` is the documented escape hatch for the DOM ReadableStream
+  // <-> Node ReadableStream signature mismatch. Sonar S4325 is wrong here:
+  // without the assertion TS rejects the call. Same pattern as
+  // src/menubar-installer.ts:116.
+  const nodeStream = Readable.fromWeb(response.body as never) // NOSONAR S4325
   await pipeline(nodeStream, createWriteStream(destPath))
 }
 
@@ -110,7 +117,7 @@ async function runMsiexec(args: string[]): Promise<void> {
     // SonarQube would otherwise flag (S4036).
     const exe = process.env.SystemRoot
       ? join(process.env.SystemRoot, 'System32', 'msiexec.exe')
-      : 'C:\\Windows\\System32\\msiexec.exe'
+      : String.raw`C:\Windows\System32\msiexec.exe`
     const proc = spawn(exe, args, { stdio: 'inherit' })
     proc.on('error', reject)
     proc.on('close', (code) => {

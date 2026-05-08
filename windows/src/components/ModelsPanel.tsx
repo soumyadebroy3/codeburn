@@ -1,7 +1,7 @@
 import type { ReportData } from '../types'
 import { formatUSD } from '../format'
 
-type Props = { data: ReportData | null }
+type Props = Readonly<{ data: ReportData | null }>
 
 export function ModelsPanel({ data }: Props) {
   if (!data || data.models.length === 0) return null

@@ -1,7 +1,7 @@
 import { fetchReport } from '../store'
 import type { ReportData } from '../types'
 
-type Props = { data: ReportData | null }
+type Props = Readonly<{ data: ReportData | null }>
 
 export function Footer({ data }: Props) {
   return (
