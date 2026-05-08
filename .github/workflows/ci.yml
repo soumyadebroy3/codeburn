@@ -71,9 +71,11 @@ jobs:
         # internal API later broke (BaseInstrumentor moved). 1.110+ ships
         # against a refreshed opentelemetry pin and imports cleanly on
         # current pip resolvers.
-        # setuptools brings pkg_resources, which Python 3.12 no longer
-        # ships by default but semgrep's runtime imports.
-        run: pip install --upgrade pip && pip install 'setuptools' 'semgrep==1.110.0'
+        # setuptools<81 still ships pkg_resources, which Python 3.12 no
+        # longer bundles but opentelemetry's instrumentation imports.
+        # Newer setuptools (>=81) removed pkg_resources from the default
+        # install, so an unpinned `pip install setuptools` doesn't help.
+        run: pip install --upgrade pip && pip install 'setuptools<81' 'semgrep==1.110.0'
 
       - name: Run Semgrep bracket-assign guard
         run: |
