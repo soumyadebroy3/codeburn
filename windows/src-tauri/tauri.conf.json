@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "label": "main",
+        "label": "popover",
         "title": "CodeBurn",
         "width": 380,
         "height": 560,
@@ -22,9 +22,10 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
-        "alwaysOnTop": false,
+        "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false,
+        "focus": false,
         "windowEffects": {
           "effects": ["mica", "acrylic"],
           "state": "active"

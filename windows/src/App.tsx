@@ -22,13 +22,28 @@ export default function App() {
     )
   }
 
+  // First-fetch can take 10-30s on a large session corpus (parsing every
+  // Claude/Codex/Cursor session JSONL). Show a placeholder so the popover
+  // doesn't look broken-empty during that wait.
+  const isInitialFetch = !data && loading
+
   return (
     <div className="app">
       <TopHeader data={data} loading={loading} />
       <PeriodSwitcher />
-      <PlanSection data={data} />
-      <ActivityPanel data={data} />
-      <ModelsPanel data={data} />
+      {isInitialFetch ? (
+        <div className="loading-state">
+          <div className="loading-spinner" />
+          <div className="loading-text">Parsing your AI sessions…</div>
+          <div className="loading-hint">First load can take a few seconds.</div>
+        </div>
+      ) : (
+        <>
+          <PlanSection data={data} />
+          <ActivityPanel data={data} />
+          <ModelsPanel data={data} />
+        </>
+      )}
       <Footer data={data} />
     </div>
   )

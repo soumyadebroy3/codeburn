@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.2.7 - 2026-05-09
+
+### Fixed (Windows tray)
+- **Click-anywhere-closes-popover bug.** The tray's `on_window_event` handler hid the popover whenever the WebView2-hosted window lost focus (`WindowEvent::Focused(false)`), but Tauri's child WebView briefly drops outer-window focus when an inner control receives a click — period tabs, refresh button, etc. So clicking ANYTHING inside the popover triggered the hide. Adopted upstream PR #101's pattern (closed-not-merged, but the technique is correct — closed only because they hadn't tested on Windows): set `focus: false` on the popover window so internal clicks can't disturb focus, then call `set_focus()` manually once after `show()` so click-outside-to-dismiss still works. Combined with a 300ms `LAST_HIDDEN_MS` debounce that prevents the tray-click → focus-loss → re-show loop. Net result: clicks inside the popover stay interactive; clicks outside (other apps, desktop) dismiss it; clicking the tray icon while visible reliably hides it once.
+- **Popover no longer rendered near the tray icon.** Tauri's default placement put the popover floating in the top-left of the screen on first show. Now anchored to the bottom-right of the primary monitor with a taskbar-aware margin, so it appears next to the tray icon as users expect.
+- **Empty-middle-section during first fetch.** Initial `invoke('fetch_report')` can take 10-30 seconds on a large session corpus (parsing every Claude / Codex / Cursor JSONL on disk). The Activity / Models / Plan panels rendered `null` while data was null, so the popover middle section was blank during the wait — looked broken. Added a loading state with a spinner and "Parsing your AI sessions…" message that shows during the initial fetch.
+- **Tray died when the popover window closed.** Tauri's default behaviour exits the process when the last window closes — but this is a tray app where the lifecycle should be owned by the tray icon, not any window. `RunEvent::ExitRequested` now `prevent_exit()`s, and `WindowEvent::CloseRequested` (e.g. Alt+F4) hides the popover instead of closing it.
+
 ## 2.2.6 - 2026-05-09
 
 ### Fixed
