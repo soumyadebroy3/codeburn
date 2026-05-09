@@ -96,13 +96,30 @@ jobs:
 
   update-homebrew-tap:
     # Auto-bumps the soumyadebroy3/homebrew-codeburn formula after a successful
-    # npm publish. Runs only on `v*` tag pushes (skips workflow_dispatch /
-    # republishes). Requires HOMEBREW_TAP_TOKEN — a fine-grained PAT scoped
-    # ONLY to soumyadebroy3/homebrew-codeburn with "Contents: Read and write".
+    # npm publish. Runs only on `v*` tag pushes.
+    #
+    # Auth: short-lived GitHub App installation token, minted per run via
+    # actions/create-github-app-token. No long-lived PAT stored anywhere —
+    # the only secrets are HOMEBREW_TAP_APP_ID (numeric, public-ish) and
+    # HOMEBREW_TAP_APP_PRIVATE_KEY (PEM). Token issued is scoped to the
+    # specific App + the specific repos it's installed on (just the tap),
+    # and lives ~1h.
     needs: publish
     if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
+      - name: Mint GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          # Restrict the minted token to ONLY the tap repo — even if the App
+          # were ever installed on more repos, this scope clamp keeps the
+          # token's blast radius to exactly what the workflow needs.
+          owner: soumyadebroy3
+          repositories: homebrew-codeburn
+
       - name: Resolve version
         id: ver
         run: echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
@@ -127,7 +144,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: soumyadebroy3/homebrew-codeburn
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: tap
           persist-credentials: true
 
@@ -157,8 +174,11 @@ jobs:
             echo "Formula already at $VERSION; nothing to commit."
             exit 0
           fi
-          git config user.email "43921833+soumyadebroy3@users.noreply.github.com"
-          git config user.name "soumyadebroy3"
+          # Use the GitHub App's bot identity for the commit. The numeric
+          # user-id format follows the convention GitHub uses for App-as-author
+          # commits — replace 43921833 with the App's user-id once known.
+          git config user.email "soumyadebroy3-homebrew-bumper[bot]@users.noreply.github.com"
+          git config user.name "soumyadebroy3-homebrew-bumper[bot]"
           git add Formula/codeburn.rb
           git commit -m "codeburn ${VERSION}
 
