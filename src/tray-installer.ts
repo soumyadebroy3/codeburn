@@ -13,7 +13,11 @@ const RELEASE_API = 'https://api.github.com/repos/soumyadebroy3/codeburn/release
 const ASSET_PATTERN = /^CodeBurn[. _-]?Tray.*\.msi$/i
 const CHECKSUM_PATTERN = /\.msi\.sha256$/i
 const SUPPORTED_OS = 'win32'
-const RELEASE_TAG_PREFIX = 'tray-v'
+// Two tag patterns ship a tray .msi: `tray-v*` (component-only releases)
+// and `v*` (lockstep fork-wide releases — npm + menubar + tray together).
+// We pick the most recent release that has a tray MSI attached, regardless
+// of which tag pattern, so the installer always reflects the latest build.
+const TRAY_RELEASE_TAG_PATTERNS = [/^tray-v/, /^v\d/]
 
 export type InstallResult = { msiPath: string; launched: boolean }
 
@@ -34,11 +38,20 @@ function ensureSupportedPlatform(): void {
   }
 }
 
+function isTrayReleaseTag(tagName: string): boolean {
+  return TRAY_RELEASE_TAG_PATTERNS.some(p => p.test(tagName))
+}
+
 async function fetchLatestTrayAssets(): Promise<ResolvedAssets> {
-  // Pull the most recent 30 releases and pick the first one whose tag starts
-  // with `tray-v`. We can't use `/releases/latest` because that returns the
-  // single newest release across the whole repo — and `mac-v*` releases for
-  // the macOS menubar would shadow our tray releases.
+  // Pull the most recent 30 releases and walk them in order (newest first).
+  // Pick the first one whose tag matches a tray release pattern AND has a
+  // tray .msi attached. This is the right shape because:
+  //   1. /releases/latest only returns the single newest tag across the
+  //      whole repo, and mac-v* releases would shadow ours
+  //   2. Both `tray-v*` (component-only) and `v*` (lockstep) releases ship
+  //      a tray .msi after the consolidated workflow rollout
+  //   3. Skipping releases without a tray asset is safe — `mac-vX` releases
+  //      have no MSI, and we just keep walking the list
   const response = await fetch(RELEASE_API, {
     headers: {
       'User-Agent': 'codeburn-tray-installer',
@@ -49,22 +62,25 @@ async function fetchLatestTrayAssets(): Promise<ResolvedAssets> {
     throw new Error(`GitHub release lookup failed: HTTP ${response.status}`)
   }
   const releases = await response.json() as ReleaseResponse[]
-  const trayRelease = releases.find(r => r.tag_name.startsWith(RELEASE_TAG_PREFIX))
-  if (!trayRelease) {
-    throw new Error(
-      `No \`${RELEASE_TAG_PREFIX}*\` release found. The Windows tray hasn't been published yet — ` +
-      `check https://github.com/soumyadebroy3/codeburn/releases.`,
-    )
+  let trayRelease: ReleaseResponse | null = null
+  let msi: ReleaseAsset | undefined
+  for (const release of releases) {
+    if (!isTrayReleaseTag(release.tag_name)) continue
+    const candidate = release.assets.find(a => ASSET_PATTERN.test(a.name))
+    if (candidate) {
+      trayRelease = release
+      msi = candidate
+      break
+    }
   }
-  const msi = trayRelease.assets.find(a => ASSET_PATTERN.test(a.name))
-  if (!msi) {
+  if (!trayRelease || !msi) {
     throw new Error(
-      `No MSI asset found in release ${trayRelease.tag_name}. ` +
+      `No tray-v* or v* release with a CodeBurn.Tray*.msi asset found. ` +
       `Check https://github.com/soumyadebroy3/codeburn/releases.`,
     )
   }
   const checksum = trayRelease.assets.find(a =>
-    CHECKSUM_PATTERN.test(a.name) && a.name.startsWith(msi.name),
+    CHECKSUM_PATTERN.test(a.name) && a.name.startsWith(msi!.name),
   ) ?? null
   return { msi, checksum, tag: trayRelease.tag_name }
 }
@@ -167,8 +183,45 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
     console.log('Running MSI installer...')
     await runMsiexec(args)
 
-    return { msiPath: archivePath, launched: true }
+    // Tauri's WiX installer doesn't ship a "launch app after install"
+    // checkbox, so manually fire the .exe ourselves. Without this, users
+    // get an empty 'codeburn tray' return and no visible tray icon, which
+    // looks like the install silently failed. Best-effort: any failure
+    // to launch (missing .exe, blocked by AV, etc.) is non-fatal — the
+    // user can always start it from the Start Menu manually.
+    const launched = await launchInstalledTray()
+
+    return { msiPath: archivePath, launched }
   } finally {
     await rm(stagingDir, { recursive: true, force: true })
   }
+}
+
+const TRAY_EXE_CANDIDATES = [
+  String.raw`C:\Program Files\CodeBurn Tray\CodeBurn Tray.exe`,
+  String.raw`C:\Program Files (x86)\CodeBurn Tray\CodeBurn Tray.exe`,
+]
+
+async function launchInstalledTray(): Promise<boolean> {
+  for (const exe of TRAY_EXE_CANDIDATES) {
+    if (!(await exists(exe))) continue
+    try {
+      // detached + ignored stdio so the tray app keeps running after the
+      // CLI exits; otherwise Node would tear it down with the parent.
+      const child = spawn(exe, [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      child.unref()
+      console.log(`  Launched ${exe}.`)
+      console.log('  (Look in the system tray near the clock — click the ^ chevron if hidden.)')
+      return true
+    } catch {
+      return false
+    }
+  }
+  console.log('  Note: install completed but the tray binary was not at any expected path.')
+  console.log('  Start it manually from the Start Menu ("CodeBurn Tray").')
+  return false
 }
