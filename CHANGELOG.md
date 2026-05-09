@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.2.2 - 2026-05-09
+
+### Changed
+- **Homebrew tap auto-bump.** `release-npm.yml` now updates `Formula/codeburn.rb` in `soumyadebroy3/homebrew-codeburn` automatically after each successful npm publish, using a per-run GitHub App installation token (no long-lived PAT). The full release flow is now: `git tag vX.Y.Z && git push origin vX.Y.Z` → npm + macOS menubar + Windows tray + tap formula all bump in lockstep, hands-off.
+
 ## 2.2.1 - 2026-05-09
 
 ### Changed
