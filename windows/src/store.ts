@@ -2,9 +2,19 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Period, ReportData } from './types'
 
-// Tiny observable store. We don't pull in zustand — three fields and a
-// listener set keep the binary trivially small (every dependency is bytes
-// in the WebView shell).
+// Tiny observable store. We don't pull in zustand — five fields and a
+// listener set keep the binary trivially small.
+//
+// CRITICAL: useSyncExternalStore detects change via Object.is on the
+// snapshot returned by getSnapshot. If we return the same `state` object
+// reference every time, React thinks nothing changed and skips re-render
+// even after we mutated fields and called emit(). The earlier version of
+// this file did exactly that — the popover rendered once on mount, then
+// ignored every subsequent state change (period clicks, fetched data,
+// loading flag). Symptom: tabs appeared unresponsive, loading state
+// stuck. Fix: maintain a separate `snapshot` reference and replace it
+// (shallow clone) on every emit, so getSnapshot returns a new object
+// when state has actually changed.
 type State = {
   period: Period
   data: ReportData | null
@@ -21,14 +31,19 @@ const state: State = {
   lastFetched: null,
 }
 
+let snapshot: State = { ...state }
 const listeners = new Set<() => void>()
 
 function emit(): void {
+  // Fresh reference so useSyncExternalStore's Object.is comparison sees
+  // a change and triggers a re-render. Shallow clone is enough — none of
+  // our state fields are nested objects we'd want React to walk into.
+  snapshot = { ...state }
   for (const l of listeners) l()
 }
 
 export function getState(): State {
-  return state
+  return snapshot
 }
 
 export function subscribe(fn: () => void): () => void {

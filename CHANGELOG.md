@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.2.10 - 2026-05-09
+
+### Fixed (Windows tray)
+- **Period tabs unresponsive after first render.** `windows/src/store.ts`'s `useSyncExternalStore` snapshot returned the same `state` object reference every time. React's `Object.is` comparison saw no change and skipped re-rendering, so clicking "Today" / "30 Days" / "Month" / "All" silently mutated the store's `state.period` field but the visual tab + the data fetch never updated. Symptom: only "7 Days" appeared to work because that was the initial state on mount. Fix: maintain a separate `snapshot` variable and replace it with `{ ...state }` on every `emit()`, so `getSnapshot` returns a fresh reference when fields have changed. Found by comparing against upstream PR #101 — they side-stepped the issue by using component-local `useState` per-component instead of an external store. Snapshot-replacement is the minimal fix that keeps our existing store shape.
+
 ## 2.2.9 - 2026-05-09
 
 ### Fixed (Windows tray)
