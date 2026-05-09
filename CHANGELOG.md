@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.2.0 - 2026-05-09
+
+### Fixed (cherry-picked from upstream)
+- **`node:sqlite` V8 crash on invalid UTF-8 in text columns** (cherry-picked from upstream PR #272). Cursor / Goose / OpenCode SQLite providers used to crash with a `Check failed: (location_) != nullptr` V8 abort whenever a TEXT column held a truncated multi-byte UTF-8 sequence. The query layer now selects content columns as `CAST(... AS BLOB)` and decodes them in JS via `TextDecoder('utf-8', { fatal: false })`, so bad bytes become `U+FFFD` instead of taking down the process. Removes the Node 22 patch-version blocklist that was previously needed.
+- **Stop suppressing routine "no pricing data" warnings on every CLI invocation** (cherry-picked from upstream PR #266). Local Ollama / quantized models, GGUF tags, and similar are no longer flagged on stderr by default — three warning lines used to greet new users before the dashboard drew. The warning is now opt-in via `CODEBURN_VERBOSE=1`. Includes a heuristic that detects local-model name shapes (`:tag` suffix, `q4_K_M` / `bf16` / etc.) so the "update codeburn" hint isn't shown for models that have no public pricing.
+- **Compare-view loading-flash on periodic refresh** (cherry-picked from upstream PR #266 second commit). The 30-second background refresh used to flip the comparison view to a "Loading…" screen and reset the user's scroll position; rows now recompute in place.
+- **Menubar stuck-on-loading recovery** (Swift menubar, from upstream PR #266). After a long sleep the menubar popover would hang on "Loading Today…" with no error. Now self-recovers.
+- **Windows test for `cli-plan` failing on `os.homedir()` mismatch** (cherry-picked from upstream PR #252). Sets `HOMEPATH` and `HOMEDRIVE` alongside `USERPROFILE` so the spawned process resolves `homedir()` to the temp dir on every Windows path-resolution shape — supersedes the partial fix shipped in v2.0.0.
+
 ## 2.1.0 - 2026-05-08
 
 ### Added (CLI)
