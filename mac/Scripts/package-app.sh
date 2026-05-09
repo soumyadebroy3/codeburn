@@ -9,6 +9,13 @@
 set -euo pipefail
 
 VERSION="${1:-dev}"
+# CFBundleShortVersionString must be bare semver per Apple's spec — strip
+# any leading "v" the caller / git tag passed in. Without this, a tag of
+# "v2.2.1" produced an Info.plist with version "v2.2.1", which made the
+# popover footer render "vv2.2.1" because the SwiftUI view prepends its
+# own "v" prefix at display time. Mirrors the same '^v' strip in the
+# Windows tray's build-msi.ps1.
+VERSION="${VERSION#v}"
 BUNDLE_NAME="CodeBurnMenubar.app"
 BUNDLE_ID="org.agentseal.codeburn-menubar"
 EXECUTABLE_NAME="CodeBurnMenubar"

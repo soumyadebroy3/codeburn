@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.2.3 - 2026-05-09
+
+### Fixed
+- **macOS menubar footer rendering "vv2.2.X" with a double `v` prefix.** `mac/Scripts/package-app.sh` was passing the raw tag (e.g. `v2.2.1`) into `CFBundleShortVersionString`, which Apple's spec says should be bare semver. The SwiftUI Footer then did `"v\(version)"` and ended up with two leading `v`s. Strip the leading `v` in the build script — same `^v` strip the Windows tray's `build-msi.ps1` already does — so the bundle stamps `2.2.3` and the popover renders `v2.2.3`.
+
 ## 2.2.2 - 2026-05-09
 
 ### Changed
