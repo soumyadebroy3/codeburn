@@ -215,7 +215,18 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
 
     return { installerPath: archivePath, launched }
   } finally {
-    await rm(stagingDir, { recursive: true, force: true })
+    // Cleanup must not fail the install. Windows can hold a file handle on
+    // the just-extracted installer .exe for a few seconds after the NSIS
+    // process exits, which makes rm throw EPERM even with `force: true`.
+    // The temp dir lives under %TEMP% and Windows cleans it on its own
+    // schedule anyway — best-effort log, never throw.
+    try {
+      await rm(stagingDir, { recursive: true, force: true })
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.log(`  (Note: temp staging dir was held open and could not be removed: ${detail.split('\n')[0]}. ` +
+        `Windows will clean it up automatically. Safe to ignore.)`)
+    }
   }
 }
 

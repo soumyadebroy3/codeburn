@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.2.6 - 2026-05-09
+
+### Fixed
+- **Windows tray popover rendered as a blank white box.** `Footer.tsx` referenced an `__APP_VERSION__` global that was never defined anywhere — the `declare const` only tells TypeScript the identifier exists, it doesn't actually substitute a value. At runtime in the production WebView, evaluating that identifier threw `ReferenceError: __APP_VERSION__ is not defined`, which crashed React's render before any UI mounted. The popover opened (proving the tray-icon click handler and IPC bridge work) but showed only the browser default white background. There's no devtools in the production build so this was completely silent.
+- Vite config now reads `version` from `src-tauri/tauri.conf.json` (freshly stamped by `build-msi.ps1` right before the vite build runs) and defines `__APP_VERSION__` from it. Footer also defends against the value being undefined and falls back to `'dev'` so a misconfigured build never crashes the popover again.
+- Plus a tiny non-fatal patch to `tray-installer.ts`: the staging-dir cleanup `rm()` now logs and continues if Windows is still holding a file handle on the just-extracted installer, instead of bubbling up as a scary "Tray install failed: EPERM" message after a successful install.
+
 ## 2.2.5 - 2026-05-09
 
 ### Fixed
