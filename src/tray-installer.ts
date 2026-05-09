@@ -10,8 +10,12 @@ import { Readable } from 'node:stream'
 /// Public GitHub repo that hosts the signed Windows tray builds. `/releases/latest`
 /// returns the newest tagged release; we filter its assets list for our MSI.
 const RELEASE_API = 'https://api.github.com/repos/soumyadebroy3/codeburn/releases'
-const ASSET_PATTERN = /^CodeBurn[. _-]?Tray.*\.msi$/i
-const CHECKSUM_PATTERN = /\.msi\.sha256$/i
+// Prefer the NSIS .exe (per-user install, no admin / UAC required)
+// over the MSI (per-machine, needs admin and silently rolls back if the
+// user declines or no UAC prompt fires under /qb).
+const ASSET_PATTERN_NSIS = /^CodeBurn[. _-]?Tray.*setup\.exe$/i
+const ASSET_PATTERN_MSI = /^CodeBurn[. _-]?Tray.*\.msi$/i
+const CHECKSUM_SUFFIX = '.sha256'
 const SUPPORTED_OS = 'win32'
 // Two tag patterns ship a tray .msi: `tray-v*` (component-only releases)
 // and `v*` (lockstep fork-wide releases — npm + menubar + tray together).
@@ -19,11 +23,11 @@ const SUPPORTED_OS = 'win32'
 // of which tag pattern, so the installer always reflects the latest build.
 const TRAY_RELEASE_TAG_PATTERNS = [/^tray-v/, /^v\d/]
 
-export type InstallResult = { msiPath: string; launched: boolean }
+export type InstallResult = { installerPath: string; launched: boolean }
 
 type ReleaseAsset = { name: string; browser_download_url: string }
 type ReleaseResponse = { tag_name: string; assets: ReleaseAsset[] }
-type ResolvedAssets = { msi: ReleaseAsset; checksum: ReleaseAsset | null; tag: string }
+type ResolvedAssets = { installer: ReleaseAsset; checksum: ReleaseAsset | null; tag: string }
 
 async function exists(path: string): Promise<boolean> {
   try { await stat(path); return true } catch { return false }
@@ -63,26 +67,30 @@ async function fetchLatestTrayAssets(): Promise<ResolvedAssets> {
   }
   const releases = await response.json() as ReleaseResponse[]
   let trayRelease: ReleaseResponse | null = null
-  let msi: ReleaseAsset | undefined
+  let installer: ReleaseAsset | undefined
   for (const release of releases) {
     if (!isTrayReleaseTag(release.tag_name)) continue
-    const candidate = release.assets.find(a => ASSET_PATTERN.test(a.name))
-    if (candidate) {
+    // Prefer NSIS .exe over .msi — NSIS installs per-user under
+    // %LOCALAPPDATA% without admin/UAC. The MSI is per-machine and
+    // silently rolls back without elevation under msiexec /qb.
+    const nsis = release.assets.find(a => ASSET_PATTERN_NSIS.test(a.name))
+    const msi = release.assets.find(a => ASSET_PATTERN_MSI.test(a.name))
+    if (nsis ?? msi) {
       trayRelease = release
-      msi = candidate
+      installer = nsis ?? msi
       break
     }
   }
-  if (!trayRelease || !msi) {
+  if (!trayRelease || !installer) {
     throw new Error(
-      `No tray-v* or v* release with a CodeBurn.Tray*.msi asset found. ` +
+      `No tray-v* or v* release with a CodeBurn.Tray installer asset found. ` +
       `Check https://github.com/soumyadebroy3/codeburn/releases.`,
     )
   }
   const checksum = trayRelease.assets.find(a =>
-    CHECKSUM_PATTERN.test(a.name) && a.name.startsWith(msi!.name),
+    a.name === installer!.name + CHECKSUM_SUFFIX,
   ) ?? null
-  return { msi, checksum, tag: trayRelease.tag_name }
+  return { installer, checksum, tag: trayRelease.tag_name }
 }
 
 async function verifyChecksum(archivePath: string, checksumUrl: string): Promise<void> {
@@ -126,19 +134,37 @@ async function downloadToFile(url: string, destPath: string): Promise<void> {
   await pipeline(nodeStream, createWriteStream(destPath))
 }
 
-async function runMsiexec(args: string[]): Promise<void> {
+async function runInstaller(installerPath: string, isMsi: boolean, force: boolean): Promise<void> {
+  if (isMsi) {
+    return new Promise((resolve, reject) => {
+      // msiexec lives at C:\Windows\System32\msiexec.exe on every Windows
+      // install. Using the absolute path closes the PATH-injection vector
+      // SonarQube would otherwise flag (S4036).
+      const exe = process.env.SystemRoot
+        ? join(process.env.SystemRoot, 'System32', 'msiexec.exe')
+        : String.raw`C:\Windows\System32\msiexec.exe`
+      // /qb = basic UI; /norestart = never auto-reboot
+      // REINSTALL=ALL REINSTALLMODE=vomus = force-reinstall when --force
+      const args = ['/i', installerPath, '/qb', '/norestart']
+      if (force) args.push('REINSTALL=ALL', 'REINSTALLMODE=vomus')
+      const proc = spawn(exe, args, { stdio: 'inherit' })
+      proc.on('error', reject)
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`msiexec exited with status ${code}`))
+      })
+    })
+  }
+  // NSIS installer: a self-contained .exe. Run with /S for silent install
+  // unless --force is requested (then show the wizard so the user can
+  // confirm overwrite). Per-user install means no UAC prompt.
   return new Promise((resolve, reject) => {
-    // msiexec lives at C:\Windows\System32\msiexec.exe on every Windows
-    // install. Using the absolute path closes the PATH-injection vector
-    // SonarQube would otherwise flag (S4036).
-    const exe = process.env.SystemRoot
-      ? join(process.env.SystemRoot, 'System32', 'msiexec.exe')
-      : String.raw`C:\Windows\System32\msiexec.exe`
-    const proc = spawn(exe, args, { stdio: 'inherit' })
+    const args = force ? [] : ['/S']
+    const proc = spawn(installerPath, args, { stdio: 'inherit' })
     proc.on('error', reject)
     proc.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`msiexec exited with status ${code}`))
+      else reject(new Error(`NSIS installer exited with status ${code}`))
     })
   })
 }
@@ -147,19 +173,21 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
   ensureSupportedPlatform()
 
   console.log('Looking up the latest CodeBurn Tray release...')
-  const { msi, checksum, tag } = await fetchLatestTrayAssets()
-  console.log(`  Found: ${msi.name} (${tag})`)
+  const { installer, checksum, tag } = await fetchLatestTrayAssets()
+  const isMsi = ASSET_PATTERN_MSI.test(installer.name)
+  const flavor = isMsi ? 'MSI (per-machine, requires admin)' : 'NSIS (per-user, no admin)'
+  console.log(`  Found: ${installer.name} (${tag}) — ${flavor}`)
 
   const stagingDir = await mkdtemp(join(tmpdir(), 'codeburn-tray-'))
   try {
-    const archivePath = join(stagingDir, msi.name)
-    console.log(`Downloading ${msi.name}...`)
-    await downloadToFile(msi.browser_download_url, archivePath)
+    const archivePath = join(stagingDir, installer.name)
+    console.log(`Downloading ${installer.name}...`)
+    await downloadToFile(installer.browser_download_url, archivePath)
 
     if (!checksum) {
       throw new Error(
-        `Release ${msi.name} does not publish a SHA-256 checksum file. ` +
-        `Refusing to install an unverified MSI. ` +
+        `Release ${installer.name} does not publish a SHA-256 checksum file. ` +
+        `Refusing to install an unverified binary. ` +
         `Set CODEBURN_INSECURE_INSTALL=1 to skip verification (not recommended).`,
       )
     }
@@ -171,17 +199,11 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
     }
 
     if (!(await exists(archivePath))) {
-      throw new Error(`MSI did not land at ${archivePath}.`)
+      throw new Error(`Installer did not land at ${archivePath}.`)
     }
 
-    // /qb = basic UI (progress bar only, no Wizard pages)
-    // /norestart = never auto-reboot
-    // REINSTALL=ALL REINSTALLMODE=vomus = force-reinstall when --force
-    const args = ['/i', archivePath, '/qb', '/norestart']
-    if (options.force) args.push('REINSTALL=ALL', 'REINSTALLMODE=vomus')
-
-    console.log('Running MSI installer...')
-    await runMsiexec(args)
+    console.log(`Running ${isMsi ? 'MSI' : 'NSIS'} installer...`)
+    await runInstaller(archivePath, isMsi, options.force === true)
 
     // Tauri's WiX installer doesn't ship a "launch app after install"
     // checkbox, so manually fire the .exe ourselves. Without this, users
@@ -191,15 +213,22 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
     // user can always start it from the Start Menu manually.
     const launched = await launchInstalledTray()
 
-    return { msiPath: archivePath, launched }
+    return { installerPath: archivePath, launched }
   } finally {
     await rm(stagingDir, { recursive: true, force: true })
   }
 }
 
+// Tauri NSIS installs per-user under %LOCALAPPDATA%\<productName>\ (with
+// the spaced product name), and the binary uses Cargo's [package].name —
+// `codeburn-tray.exe` (lowercase, hyphenated) — NOT productName.exe. The
+// per-machine MSI fallbacks under Program Files are kept in case a future
+// release switches to a per-machine install or runs under admin.
+const LOCAL_APPDATA = process.env.LOCALAPPDATA ?? String.raw`C:\Users\Default\AppData\Local`
 const TRAY_EXE_CANDIDATES = [
-  String.raw`C:\Program Files\CodeBurn Tray\CodeBurn Tray.exe`,
-  String.raw`C:\Program Files (x86)\CodeBurn Tray\CodeBurn Tray.exe`,
+  `${LOCAL_APPDATA}\\CodeBurn Tray\\codeburn-tray.exe`,
+  String.raw`C:\Program Files\CodeBurn Tray\codeburn-tray.exe`,
+  String.raw`C:\Program Files (x86)\CodeBurn Tray\codeburn-tray.exe`,
 ]
 
 async function launchInstalledTray(): Promise<boolean> {

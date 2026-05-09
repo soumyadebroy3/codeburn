@@ -861,7 +861,7 @@ program
   .action(async (opts: { force?: boolean }) => {
     try {
       const result = await installTrayApp({ force: opts.force })
-      console.log(`\n  Installed from ${result.msiPath}.\n`)
+      console.log(`\n  Installed from ${result.installerPath}.\n`)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`\n  Tray install failed: ${message}\n`)

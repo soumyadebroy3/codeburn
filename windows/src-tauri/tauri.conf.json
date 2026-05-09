@@ -59,12 +59,5 @@
       }
     }
   },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://github.com/soumyadebroy3/codeburn/releases/latest/download/latest.json"
-      ]
-    }
-  }
+  "plugins": {}
 }

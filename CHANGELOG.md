@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.2.5 - 2026-05-09
+
+### Fixed
+- **Windows tray app crashed on every launch with no visible error.** Tauri's `tauri-plugin-updater` panics during init when its config is missing the required `pubkey` field (Ed25519 verification key). The panic happened before the tray icon registered, and `windows_subsystem = "windows"` swallowed the stderr — so the .exe appeared to launch and exit silently with no Event Viewer entry, no popup, no nothing. Removed the updater plugin entirely (Rust dep, plugin init, capability, JS dep, and the empty `plugins.updater` block in `tauri.conf.json`). End users now update via `codeburn tray --force`. Will re-add when there's a real key-management story for the fork.
+- **`codeburn tray` was downloading the wrong release artefact.** The installer's tag-prefix filter only matched `tray-v*`, so it pulled v0.1.0 from May 8 even after the consolidated workflow started attaching tray builds to `v*` lockstep releases. Now walks the recent-30 release list looking for `tray-v*` OR `v*` tags whose assets include a `CodeBurn.Tray*setup.exe` (NSIS, preferred) or `CodeBurn.Tray*.msi` (fallback).
+- **`codeburn tray` was preferring the MSI installer over NSIS.** The MSI is per-machine and silently rolls back without admin / UAC under `msiexec /qb`. NSIS installs per-user under `%LOCALAPPDATA%\CodeBurn Tray\` and never needs UAC. Reordered preference: NSIS first, MSI fallback. Also rewrote `runInstaller()` to handle both flavours.
+- **Auto-launch path for the installed binary was wrong.** Previously looked for `C:\Program Files\CodeBurn Tray\CodeBurn Tray.exe`. Tauri's NSIS template installs to `%LOCALAPPDATA%\CodeBurn Tray\codeburn-tray.exe` (Cargo `[package].name` for the binary, productName for the directory). Updated the candidate list with the per-user path first, MSI/Program Files paths as fallbacks for future per-machine builds.
+
 ## 2.2.4 - 2026-05-09
 
 ### Fixed (cherry-picked from upstream main since v2.2.3)

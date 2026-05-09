@@ -71,7 +71,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // tauri-plugin-updater intentionally omitted for v1: it requires
+        // an Ed25519 keypair (private key in CI secrets, public key
+        // embedded here) and we don't yet have a key-management story for
+        // the fork. Without `pubkey` set, the plugin panics on init with
+        // PluginInitialization("updater", "missing field `pubkey`") and
+        // the whole app exits before the tray icon registers. Users update
+        // via `codeburn tray --force` instead. Re-add when we ship signed
+        // updates.
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
