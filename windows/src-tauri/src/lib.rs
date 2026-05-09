@@ -167,7 +167,11 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             ipc::fetch_report,
+            ipc::fetch_payload,
             ipc::open_full_report,
+            ipc::open_terminal_command,
+            ipc::set_currency,
+            ipc::quit_app,
         ])
         .setup(|app| {
             // Make sure popover starts hidden — we control visibility via

@@ -1,6 +1,6 @@
 [package]
 name = "codeburn-tray"
-version = "0.1.0"
+version = "2.3.0"
 description = "CodeBurn Windows system-tray app — fork of getagentseal/codeburn (soumyadebroy3 fork)"
 authors = ["soumyadebroy3"]
 edition = "2021"

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 2.3.0 - 2026-05-09
+
+### Changed (Windows tray UI)
+- **Wholesale-port of upstream PR #101's desktop UI.** Replaced the hand-rolled `windows/src/` panels with the full upstream component tree: `HeroSection`, `AgentTabStrip`, `PeriodTabs`, `InsightPills` with Trend / Forecast / Pulse / Stats insights, `ActivitySection`, `ModelsSection`, `FindingsSection`, `EmptyProviderState`, `LoadingOverlay`, `StarBanner`. Brings the Windows popover within sight of the macOS menubar's polish (sparkline trend, projection insight, longest-streak stats). 14 components + 5 lib helpers (`cache`, `currency`, `dates`, `payload`, `tips`) + revamped `styles.css` design tokens.
+- **Currency picker is now functional.** New `set_currency(code)` IPC handler shells to `codeburn currency CODE`, parses the rate/symbol from stdout, and round-trips the resolved `{ code, symbol, rate }` to React. The picker `<select>` in the footer applies the chosen currency immediately and the hero figure re-renders in the new unit.
+- **`fetch_payload(period, provider, includeOptimize)` IPC** replaces `fetch_report` for the popover's per-tab fetch. Calls `codeburn status --format menubar-json --period X --provider Y`, returning the same `MenubarPayload` shape the macOS menubar consumes — schema parity across both apps.
+- **`open_terminal_command(args)`** allowlists "report" / "export" subcommands so the footer's Open Full Report / Export CSV / Export JSON actions work without exposing arbitrary CLI surface to the WebView.
+- **`quit_app` IPC** wired to the popover footer's `×` quit button.
+
+### Fixed (mac menubar — carry-forward from prior unreleased commits)
+- **Menubar blocking system sleep + tab-strip/detail desync** (`827bb96`, upstream PR #270 cherry-pick).
+- **Stuck loading after sleep, double-click on pill tabs, oversized disconnected tabs** (`2405b4d`).
+- **CFBundleShortVersionString stripped of leading `v`** so Sparkle & macOS see clean SemVer (`cf84e05`).
+- **Quiet routine pricing warnings + recover from stuck-loading** (`459388e`).
+
+### Quality
+- **SonarQube quality gate: PASSED** at 0 new violations / 0 new hotspots / 0% new duplicated lines for `v2.3.0-pre`. Cleared via 11 mechanical fixes against the 31-issue + 1-hotspot delta the wholesale port introduced: 15× `Readonly<>` props (S6759), 3× `dataset.theme` + `globalThis` (S7761/S7764), 2× a11y native button + section (S6848), 2× class-member `readonly` (S2933), 1× ReDoS-safe `Intl` formatter (S5852+S7781), 1× cognitive-complexity refactor in `StatsInsight` (S3776, CC 18→≤15), 1× braces around if-body (S2681), 1× stable React key (S6479), 1× `.getTime()` drop (S7719), 1× `String.raw` for path literal (S7780), 1× redundant `!` (S4325), 1× error-toast contrast (css:S7924).
+- Project coverage 67.3% (line 65.2%); `windows/**` is intentionally excluded per `sonar-project.properties` since the tray is exercised via Windows CI E2E builds, not vitest.
+
 ## 2.2.11 - 2026-05-09
 
 ### Changed (Windows tray UI)

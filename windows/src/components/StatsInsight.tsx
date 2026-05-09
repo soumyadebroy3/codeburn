@@ -1,0 +1,126 @@
+import type { MenubarPayload, DailyEntry } from '../lib/payload'
+import type { CurrencyState } from '../lib/currency'
+import { formatCurrency, formatCompactCurrency } from '../lib/currency'
+import { formatDateKey, addDays, startOfDay, firstOfMonth, daysInMonth } from '../lib/dates'
+
+type Props = Readonly<{
+  payload: MenubarPayload
+  currency: CurrencyState
+}>
+
+type DayCost = { date: string; cost: number }
+
+function findPeakDay(history: DailyEntry[]): DayCost | null {
+  return history.reduce<DayCost | null>(
+    (best, d) => (!best || d.cost > best.cost) ? d : best, null,
+  )
+}
+
+function computeCurrentStreak(costByDate: Map<string, number>, today: Date): number {
+  const MAX_LOOKBACK = 400
+  let streak = 0
+  for (let i = 0; i < MAX_LOOKBACK; i++) {
+    const key = formatDateKey(addDays(today, -i))
+    if ((costByDate.get(key) ?? 0) > 0) streak++
+    else break
+  }
+  return streak
+}
+
+function computeLongestStreak(history: DailyEntry[], costByDate: Map<string, number>, today: Date): number {
+  if (history.length === 0) return 0
+  const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date))
+  const first = new Date(sorted[0].date + 'T00:00:00Z')
+  const totalDays = Math.round((today.getTime() - first.getTime()) / 86_400_000) + 1
+  let longest = 0
+  let running = 0
+  for (let i = 0; i < totalDays; i++) {
+    const key = formatDateKey(addDays(first, i))
+    if ((costByDate.get(key) ?? 0) > 0) {
+      running++
+      longest = Math.max(longest, running)
+    } else {
+      running = 0
+    }
+  }
+  return longest
+}
+
+function streakLabel(days: number): string {
+  return days > 0 ? `${days} days` : '-'
+}
+
+function computeStats(payload: MenubarPayload, currency: CurrencyState) {
+  const history = payload.history.daily
+  const now = new Date()
+  const today = startOfDay(now)
+  const fomStr = formatDateKey(firstOfMonth(now))
+
+  const mtdActive = history.filter(d => d.date >= fomStr && d.cost > 0).length
+
+  const peak = findPeakDay(history)
+  const hasPeak = !!peak && peak.cost > 0
+  const mostActiveDay = hasPeak
+    ? new Date(peak.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+    : '-'
+  const peakDaySpend = hasPeak ? formatCompactCurrency(peak.cost, currency) : '-'
+
+  const costByDate = new Map(history.map(d => [d.date, d.cost]))
+  const currentStreakDays = computeCurrentStreak(costByDate, today)
+  const longestStreakDays = computeLongestStreak(history, costByDate, today)
+
+  const lifetimeTotal = history.length > 0 ? history.reduce((s, d) => s + d.cost, 0) : null
+
+  return {
+    favoriteModel: payload.current.topModels[0]?.name ?? '-',
+    activeDaysFraction: `${mtdActive}/${daysInMonth(now)}`,
+    mostActiveDay,
+    peakDaySpend,
+    currentStreak: streakLabel(currentStreakDays),
+    longestStreak: streakLabel(longestStreakDays),
+    lifetimeTotal,
+    historyDayCount: history.length,
+  }
+}
+
+export function StatsInsight({ payload, currency }: Props) {
+  const s = computeStats(payload, currency)
+
+  return (
+    <div className="stats-insight">
+      <div className="stats-grid">
+        <div className="stats-col">
+          <StatRow label="Favorite model" value={s.favoriteModel} />
+          <StatRow label="Active days (month)" value={s.activeDaysFraction} />
+          <StatRow label="Most active day" value={s.mostActiveDay} />
+          <StatRow label="Peak day spend" value={s.peakDaySpend} />
+        </div>
+        <div className="stats-col">
+          <StatRow label="Sessions today" value={`${payload.current.sessions}`} />
+          <StatRow label="Calls today" value={payload.current.calls.toLocaleString()} />
+          <StatRow label="Current streak" value={s.currentStreak} />
+          <StatRow label="Longest streak" value={s.longestStreak} />
+        </div>
+      </div>
+      {s.lifetimeTotal !== null && (
+        <div className="stats-lifetime">
+          <span className="stats-lifetime-label">
+            Tracked spend (last {s.historyDayCount} days)
+          </span>
+          <span className="stats-lifetime-value">
+            {formatCurrency(s.lifetimeTotal, currency)}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatRow({ label, value }: Readonly<{ label: string; value: string }>) {
+  return (
+    <div className="stat-row">
+      <div className="stat-row-label">{label}</div>
+      <div className="stat-row-value">{value}</div>
+    </div>
+  )
+}

@@ -88,7 +88,7 @@ async function fetchLatestTrayAssets(): Promise<ResolvedAssets> {
     )
   }
   const checksum = trayRelease.assets.find(a =>
-    a.name === installer!.name + CHECKSUM_SUFFIX,
+    a.name === installer.name + CHECKSUM_SUFFIX,
   ) ?? null
   return { installer, checksum, tag: trayRelease.tag_name }
 }
@@ -237,7 +237,7 @@ export async function installTrayApp(options: { force?: boolean } = {}): Promise
 // release switches to a per-machine install or runs under admin.
 const LOCAL_APPDATA = process.env.LOCALAPPDATA ?? String.raw`C:\Users\Default\AppData\Local`
 const TRAY_EXE_CANDIDATES = [
-  `${LOCAL_APPDATA}\\CodeBurn Tray\\codeburn-tray.exe`,
+  String.raw`${LOCAL_APPDATA}\CodeBurn Tray\codeburn-tray.exe`,
   String.raw`C:\Program Files\CodeBurn Tray\codeburn-tray.exe`,
   String.raw`C:\Program Files (x86)\CodeBurn Tray\codeburn-tray.exe`,
 ]
