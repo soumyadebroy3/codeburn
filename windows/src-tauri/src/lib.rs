@@ -118,7 +118,15 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             }
         }
         "report" => {
-            let _ = ipc::open_full_report();
+            // open_full_report is async (it spawns the codeburn CLI to generate
+            // the HTML). Tauri's tokio runtime is available via the AppHandle's
+            // async_runtime. Spawn-and-forget is fine: failures surface in the
+            // CLI's own stdout/stderr (and in our log_sanitizer-scrubbed error
+            // string if we ever wire one through), and there's no popover state
+            // to update from this code path.
+            tauri::async_runtime::spawn(async {
+                let _ = ipc::open_full_report().await;
+            });
         }
         "quit" => app.exit(0),
         _ => {}

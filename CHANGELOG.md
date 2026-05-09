@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.2.9 - 2026-05-09
+
+### Fixed (Windows tray)
+- **Popover stuck at "Parsing your AI sessions…" forever.** Direct `codeburn report` returns in <1 second, but the tray spawn hung indefinitely. Root cause: `std::process::Command::output()` on Windows deadlocks when the child is a `.cmd` shim and we're running under `windows_subsystem = "windows"` with piped stdio — stderr fills the 64 KB pipe buffer, child blocks on stderr.write, our parent blocks reading stdout to EOF, neither side moves. Adopted upstream PR #101's pattern: switched the spawn to `tokio::process::Command` with parallel stdout/stderr drains via `tokio::spawn`, plus a 60-second `tokio::time::timeout` so a stuck CLI surfaces as a `Timeout` error in the UI instead of hanging the popover. Added `kill_on_drop(true)` so a cancelled IPC kills the orphan child.
+- **cmd.exe console window flashing on every auto-refresh.** Set `CREATE_NO_WINDOW` (0x08000000) via `os::windows::process::CommandExt` on the spawn. The tray's PE has `windows_subsystem = "windows"` so it has no console to inherit, and Windows was allocating a fresh console for every child — visible as a black cmd.exe blink every 30 s on each poll. Now suppressed.
+- **`fetch_report` and `open_full_report` are now async** (Tauri 2.x supports async invoke handlers natively, runs on Tauri's owned tokio runtime). Caller in lib.rs's tray-menu handler updated to `tauri::async_runtime::spawn` for the fire-and-forget "Open full report" entry.
+
+### Added
+- 20 MB stdout cap + 256 KB stderr cap on the codeburn spawn. A hostile or runaway CLI can't pin Tauri RAM. Caps mirror upstream's `MAX_PAYLOAD_BYTES` / `MAX_STDERR_BYTES` constants.
+- `PATHEXT` added to the spawn's allow-listed env so Windows can resolve `.cmd` extensions when codeburn invokes child processes (git, etc.).
+
 ## 2.2.8 - 2026-05-09
 
 ### Fixed

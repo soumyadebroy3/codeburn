@@ -27,6 +27,12 @@ once_cell = "1.21.4"
 regex = "1.12.3"
 thiserror = "2.0.18"
 open = "5.3.4"
+# tokio runtime for codeburn CLI spawn — std::process::Command::output()
+# deadlocks on Windows .cmd shim invocation under no-console + piped stdio.
+# tokio's process module drives stdout / stderr drains in parallel and
+# supports kill_on_drop + tokio::time::timeout. Pattern adopted from
+# upstream PR #101 cli.rs.
+tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "time"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
