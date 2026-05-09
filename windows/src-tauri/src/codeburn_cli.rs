@@ -132,6 +132,20 @@ pub fn run(args: &[&str]) -> Result<String, CliError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Suppress the console window flash on Windows. Without CREATE_NO_WINDOW
+    // (0x08000000), every spawn of codeburn.cmd (the npm-global shim is a
+    // batch wrapper) briefly opens a black cmd.exe window and closes it —
+    // visible to the user every 30s on each auto-refresh. The tray app's
+    // own PE has windows_subsystem = "windows" so it has no console of its
+    // own to inherit, which is what triggers the new-console allocation
+    // for child processes by default.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     // Spawn with a timeout guard. wait() blocks indefinitely so we
     // poll-with-deadline via std::process::Child::wait_timeout — that lives
     // in the `wait-timeout` crate which we'd add later. For v1 we accept a
