@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.2.8 - 2026-05-09
+
+### Fixed
+- v2.2.7's Windows tray build failed to compile (Rust type-mismatch: `show_popover` / `position_popover_near_tray` took non-generic `&WebviewWindow` but were called from generic `R: Runtime` contexts). Made the helpers generic over `R`, and renamed `hide_popover` → `hide_window` accepting `&Window` so the `on_window_event` closure can call it without a label lookup. No behavioural change vs the v2.2.7 patterns (focus:false, LAST_HIDDEN_MS debounce, top-right positioning, etc.) — same code, just compiles now. The npm / menubar workflows succeeded for v2.2.7; only the tray didn't ship.
+
 ## 2.2.7 - 2026-05-09
 
 ### Fixed (Windows tray)
