@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.2.1 - 2026-05-09
+
+### Changed
+- **Lockstep release pipeline.** Pushing a `v*` tag now triggers all three release workflows in parallel — `release-npm.yml`, `release-menubar.yml`, and `release-tray.yml` — so a single `git tag vX.Y.Z && git push origin vX.Y.Z` ships the CLI to npm, the macOS Swift `.app` to GitHub Releases, AND the Windows Tauri `.msi` to GitHub Releases. The component-only patterns (`mac-v*`, `tray-v*`) are kept as escape hatches when only one component needs a bump. No code changes from 2.2.0 — first release shipped via the consolidated pipeline.
+
 ## 2.2.0 - 2026-05-09
 
 ### Fixed (cherry-picked from upstream)

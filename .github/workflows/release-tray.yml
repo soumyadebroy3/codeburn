@@ -7,6 +7,10 @@ name: Release Windows Tray
 on:
   push:
     tags:
+      # Two tag patterns: 'v*' for fork-wide lockstep releases (npm +
+      # menubar + tray all fire from the same tag), 'tray-v*' for
+      # component-only tray bumps when only the Tauri code changes.
+      - 'v*'
       - 'tray-v*'
   workflow_dispatch:
     inputs:
@@ -36,8 +40,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # `tray-v*` tags carry the prefix in the ref; strip it. Plain `v*`
+          # tags use the bare value. workflow_dispatch passes the input.
           if [[ "${GITHUB_REF}" == refs/tags/tray-v* ]]; then
             VALUE="${GITHUB_REF#refs/tags/tray-}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VALUE="${GITHUB_REF#refs/tags/}"
           else
             VALUE="${{ github.event.inputs.version }}"
           fi
@@ -86,7 +94,7 @@ jobs:
           if-no-files-found: error
 
       - name: Generate latest.json (auto-updater manifest)
-        if: startsWith(github.ref, 'refs/tags/tray-v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/tray-v')
         shell: pwsh
         run: |
           $bare = "${{ steps.version.outputs.bare }}"
@@ -115,7 +123,7 @@ jobs:
           Set-Content -Encoding UTF8 -Path "$($msi.FullName).sha256" -Value "$sha  $($msi.Name)"
 
       - name: Create / update GitHub Release
-        if: startsWith(github.ref, 'refs/tags/tray-v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/tray-v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}

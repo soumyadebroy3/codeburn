@@ -7,6 +7,10 @@ name: Release macOS Menubar
 on:
   push:
     tags:
+      # Two tag patterns: 'v*' for fork-wide lockstep releases (npm + menubar
+      # + tray all fire from the same tag), 'mac-v*' for component-only
+      # menubar bumps when the Swift code changes without touching the CLI.
+      - 'v*'
       - 'mac-v*'
   workflow_dispatch:
     inputs:
@@ -38,8 +42,12 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # `mac-v*` tags carry the prefix in the ref; strip it. Plain `v*`
+          # tags use the bare value. workflow_dispatch passes the input.
           if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then
             VALUE="${GITHUB_REF#refs/tags/mac-}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VALUE="${GITHUB_REF#refs/tags/}"
           else
             VALUE="${{ github.event.inputs.version }}"
           fi
@@ -65,7 +73,10 @@ jobs:
           if-no-files-found: error
 
       - name: Create / update GitHub Release
-        if: startsWith(github.ref, 'refs/tags/mac-v')
+        # Attach the .zip + .sha256 to whichever tag triggered the build.
+        # On a `v*` tag, the npm + tray workflows are also publishing to the
+        # SAME GitHub release in parallel, so files just stack.
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/mac-v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
