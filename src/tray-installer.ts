@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { platform, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 
@@ -134,7 +134,25 @@ async function downloadToFile(url: string, destPath: string): Promise<void> {
   await pipeline(nodeStream, createWriteStream(destPath))
 }
 
+/// Re-validate the installer filename right before we spawn it. The asset
+/// name is already filtered against ASSET_PATTERN_{NSIS,MSI} when the release
+/// list is fetched, and the file's SHA-256 is verified against the .sha256
+/// sidecar before this function is called — but CodeQL's taint analysis
+/// cannot follow data across those boundaries (js/command-line-injection,
+/// alert #1). Re-asserting the pattern at the spawn site gives CodeQL a
+/// visible sanitizer and gives us defense-in-depth: even if a future
+/// refactor accidentally bypassed the upstream filter, this guard would
+/// still refuse to spawn anything that doesn't look like our installer.
+function assertSafeInstallerPath(installerPath: string, isMsi: boolean): void {
+  const name = basename(installerPath)
+  const pattern = isMsi ? ASSET_PATTERN_MSI : ASSET_PATTERN_NSIS
+  if (!pattern.test(name)) {
+    throw new Error(`refusing to spawn unrecognized installer: ${name}`)
+  }
+}
+
 async function runInstaller(installerPath: string, isMsi: boolean, force: boolean): Promise<void> {
+  assertSafeInstallerPath(installerPath, isMsi)
   if (isMsi) {
     return new Promise((resolve, reject) => {
       // msiexec lives at C:\Windows\System32\msiexec.exe on every Windows
