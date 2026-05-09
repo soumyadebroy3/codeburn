@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.2.11 - 2026-05-09
+
+### Changed (Windows tray UI)
+- **Big-number cost display.** Replaced the small `All $X` figure tucked in the top-right corner with a prominent HeroSection-style headline: 32px tabular-numeric figure in CodeBurn orange, weekday + date caption above ("Today · Sat May 9"), and a compact "X calls · Y sessions" line below. Adapted from upstream PR #101's `HeroSection.tsx` layout.
+- **Empty-state message** when fetch returns successfully but the user has no AI usage in the selected period. Replaces the wall of zero rows ("Calls 0", "Sessions 0", "Cost $0") that looked like a broken render. Shows "No usage for today" + a hint about running a Claude/Codex/Cursor/Copilot session and refreshing.
+
+### Removed
+- `TopHeader` and `PlanSection` components — superseded by `HeroSection` + `EmptyState`. The legacy CSS classes (`.hdr`, `.hdr-cost`, `.brand-code`, etc.) stay in styles.css for now in case any other surface adopts them later, but nothing in App.tsx references them.
+
 ## 2.2.10 - 2026-05-09
 
 ### Fixed (Windows tray)

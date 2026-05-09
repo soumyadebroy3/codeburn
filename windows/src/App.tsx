@@ -1,14 +1,14 @@
-import { TopHeader } from './components/TopHeader'
+import { HeroSection } from './components/HeroSection'
 import { PeriodSwitcher } from './components/PeriodSwitcher'
-import { PlanSection } from './components/PlanSection'
 import { ActivityPanel } from './components/ActivityPanel'
 import { ModelsPanel } from './components/ModelsPanel'
+import { EmptyState } from './components/EmptyState'
 import { Footer } from './components/Footer'
 import { useStore, useAutoRefresh } from './store'
 
 export default function App() {
   useAutoRefresh()
-  const { data, loading, error } = useStore()
+  const { data, loading, error, period } = useStore()
 
   if (error) {
     return (
@@ -22,14 +22,16 @@ export default function App() {
     )
   }
 
-  // First-fetch can take 10-30s on a large session corpus (parsing every
-  // Claude/Codex/Cursor session JSONL). Show a placeholder so the popover
-  // doesn't look broken-empty during that wait.
+  // First-fetch (no data yet AND loading): full-popover spinner. Subsequent
+  // fetches keep the previous data visible and show a subtle indicator.
   const isInitialFetch = !data && loading
+  // After fetch returns: data exists but might be empty (no sessions in
+  // this period). Render an EmptyState rather than a wall of zero rows.
+  const hasNoUsage = !!data && data.overview.calls === 0 && data.overview.sessions === 0
 
   return (
     <div className="app">
-      <TopHeader data={data} loading={loading} />
+      <HeroSection data={data} period={period} />
       <PeriodSwitcher />
       {isInitialFetch ? (
         <div className="loading-state">
@@ -37,9 +39,10 @@ export default function App() {
           <div className="loading-text">Parsing your AI sessions…</div>
           <div className="loading-hint">First load can take a few seconds.</div>
         </div>
+      ) : hasNoUsage ? (
+        <EmptyState period={period} />
       ) : (
         <>
-          <PlanSection data={data} />
           <ActivityPanel data={data} />
           <ModelsPanel data={data} />
         </>

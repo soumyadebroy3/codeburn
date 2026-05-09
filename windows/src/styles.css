@@ -39,6 +39,46 @@ body { user-select: none; -webkit-user-select: none; }
 .error-hint { font-size: 12px; color: var(--fg-dim); }
 .error-hint code { background: var(--bg-panel); padding: 2px 6px; border-radius: 4px; }
 
+/* Hero — big-number cost, adapted from upstream PR #101 HeroSection. */
+.hero {
+  padding: 6px 4px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hero-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+.hero-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--orange);
+  display: inline-block;
+}
+.hero-amount {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--orange);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+.hero-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+/* Legacy header — kept for any non-Hero callers; not used in current App.tsx. */
 .hdr { display: flex; justify-content: space-between; align-items: baseline; }
 .brand-code { font-weight: 700; font-size: 16px; }
 .brand-burn { font-weight: 700; font-size: 16px; color: var(--orange); }
@@ -46,6 +86,34 @@ body { user-select: none; -webkit-user-select: none; }
 .hdr-cost { display: flex; align-items: baseline; gap: 6px; }
 .cost-label { font-size: 11px; color: var(--fg-dim); }
 .cost-value { font-weight: 700; font-size: 18px; color: var(--orange); }
+
+/* Empty state — shown when fetch returned but no usage in this period. */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px;
+  gap: 8px;
+  text-align: center;
+}
+.empty-state-icon {
+  font-size: 28px;
+  color: var(--fg-dim);
+  opacity: 0.5;
+}
+.empty-state-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.empty-state-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+  max-width: 280px;
+}
 
 .period-tabs {
   display: flex; gap: 4px;
