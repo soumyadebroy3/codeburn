@@ -84,7 +84,21 @@ jobs:
         # No NODE_AUTH_TOKEN: npm exchanges the workflow's OIDC token for a
         # short-lived publish credential, gated by the Trusted Publishers
         # config on the package itself.
-        run: npm publish --provenance --access public
+        #
+        # Idempotent: if the version is already on npm (e.g. retagging a
+        # release after a force-push to fix a hooked commit), skip the publish
+        # rather than failing the whole job. This lets `update-homebrew-tap`
+        # (which depends on this job) still run and recompute the tarball
+        # SHA-256 against the new tag SHA.
+        run: |
+          set -euo pipefail
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "${PKG}@${VER}" version >/dev/null 2>&1; then
+            echo "::notice::${PKG}@${VER} already on npm — skipping publish (homebrew tap update will still run)"
+          else
+            npm publish --provenance --access public
+          fi
 
       - name: Attach SBOM to GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
