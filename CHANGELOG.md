@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.2.4 - 2026-05-09
+
+### Fixed (cherry-picked from upstream main since v2.2.3)
+- **macOS menubar was preventing system sleep** (cherry-picked from upstream PR #270 / `e22cd15`). `beginActivity` was called with `.userInitiated`, which signals to macOS that the app is doing important foreground work — so the system never went to sleep while the menubar ran. Now passes only `.automaticTerminationDisabled` + `.suddenTerminationDisabled`. The menubar's 30-second polling continues to work; the OS just gets to sleep the laptop again. Also parallelizes the all-providers + selected-provider refresh on tab change so the popover updates faster.
+- **Menubar stuck on "Loading…" after sleep + double-click required on pill tabs + oversized disconnected provider tabs** (cherry-picked from upstream `b317009`). Three menubar UI bugs in one commit: (a) `forceRefreshTask` now cancels alongside `refreshLoopTask` on `willSleep` and `loadingCount` resets on wake, so an in-flight fetch from before sleep can't leave the loading bar stuck; (b) `Button` wrapper around each `AgentTab` was eating the first click after the tooltip appeared — replaced with `onTapGesture` plus a `clickDismissed` guard; (c) disconnected provider tabs (Claude/Codex without quota data) reserved space for a quota bar they couldn't display, so they rendered taller than peers — now the slot is conditional on the data being present.
+- **`codeburn menubar --force` race against the still-running app** (cherry-picked from upstream `b777730`). `killRunningApp` previously sent `pkill` and immediately returned. The installer would then try to overwrite the bundle while the old process was still mid-shutdown, occasionally producing a half-replaced `.app`. Now polls `isAppRunning()` 10× at 500ms intervals (~5 seconds) before continuing, so the new install only proceeds against a confirmed-dead bundle.
+
+### Added
+- **`tests/models.test.ts`**: 6 new test cases exercising the `looksLikeLocalModel` / `shouldWarnAboutUnknownModel` paths added in v2.2.0 (Ollama-style `:tag` names, `q4_K_M` / `bf16` quantization fingerprints, `CODEBURN_VERBOSE` gating, dedup-once behaviour, synthetic-model silence). Brings new-code coverage from 66.2% → 97.8% and flips the SonarQube quality gate back to ✅.
+
 ## 2.2.3 - 2026-05-09
 
 ### Fixed

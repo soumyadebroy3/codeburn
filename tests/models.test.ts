@@ -179,3 +179,70 @@ describe('existing model names still resolve', () => {
     expect(getModelCosts('anthropic/claude-opus-4-6')).not.toBeNull()
   })
 })
+
+// Exercise the warn-helper code paths from PR #266: looksLikeLocalModel and
+// shouldWarnAboutUnknownModel are private, but every shape we care about
+// flows through calculateCost(<unknown-model>, …) on the no-pricing branch.
+describe('unknown model warnings', () => {
+  function capture(fn: () => void): string {
+    const orig = process.stderr.write.bind(process.stderr)
+    let buf = ''
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      buf += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
+      return true
+    }) as typeof process.stderr.write
+    try { fn() } finally { process.stderr.write = orig }
+    return buf
+  }
+
+  it('synthetic model is silent', () => {
+    const out = capture(() => calculateCost('<synthetic>', 1, 1, 0, 0, 0))
+    expect(out).toBe('')
+  })
+
+  it('Ollama-style local model with colon tag is silent (looksLikeLocalModel)', () => {
+    const out = capture(() => {
+      calculateCost(`qwen3.6:35b-a3b-bf16-${Math.random()}`, 1, 1, 0, 0, 0)
+    })
+    expect(out).toBe('')
+  })
+
+  it('quantized fingerprint suffix is silent (looksLikeLocalModel)', () => {
+    const out = capture(() => {
+      calculateCost(`mystery-model-q4_K_M-${Math.random()}`, 1, 1, 0, 0, 0)
+    })
+    expect(out).toBe('')
+  })
+
+  it('plain unknown model is silent without CODEBURN_VERBOSE', () => {
+    const prev = process.env['CODEBURN_VERBOSE']
+    delete process.env['CODEBURN_VERBOSE']
+    try {
+      const out = capture(() => {
+        calculateCost(`totally-unknown-${Math.random()}`, 1, 1, 0, 0, 0)
+      })
+      expect(out).toBe('')
+    } finally {
+      if (prev !== undefined) process.env['CODEBURN_VERBOSE'] = prev
+    }
+  })
+
+  it('plain unknown model warns once when CODEBURN_VERBOSE=1', () => {
+    process.env['CODEBURN_VERBOSE'] = '1'
+    try {
+      const name = `unknown-verbose-${Math.random()}`
+      const out = capture(() => calculateCost(name, 1, 1, 0, 0, 0))
+      expect(out).toContain('no pricing data for model')
+      // Second call is silent — set deduplicates.
+      const out2 = capture(() => calculateCost(name, 1, 1, 0, 0, 0))
+      expect(out2).toBe('')
+    } finally {
+      delete process.env['CODEBURN_VERBOSE']
+    }
+  })
+
+  it('returns 0 cost for unknown models regardless of warning behaviour', () => {
+    const cost = calculateCost('definitely-not-a-real-model', 1000, 1000, 0, 0, 0)
+    expect(cost).toBe(0)
+  })
+})
