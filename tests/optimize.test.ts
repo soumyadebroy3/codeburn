@@ -584,6 +584,9 @@ describe('detectLowWorthSessions', () => {
     expect(detectLowWorthSessions([project])).toBeNull()
   })
 
+  // 15s timeout: synchronous test, but the windows-latest GitHub runner has
+  // slow Node module-load + cold-cache file I/O — observed sporadic 5s default
+  // timeout breaches there. Linux/macOS finish in <50ms.
   it('flags expensive sessions with no edit turns', () => {
     const project = projectWithLowWorthSessions([
       lowWorthSession(4, 0, { turns: [lowWorthTurn({ hasEdits: false })] }),
@@ -596,7 +599,7 @@ describe('detectLowWorthSessions', () => {
     // sessionTokenTotal = input + output + cache. The lowWorthSession helper
     // sets input=output=cost*1000, so the savings ceiling is 2x cost*1000.
     expect(finding!.tokensSaved).toBe(8_000)
-  })
+  }, 15_000)
 
   it('flags retry-heavy sessions', () => {
     const project = projectWithLowWorthSessions([

@@ -217,7 +217,10 @@ skipUnlessSqlite('opencode provider - session discovery', () => {
     expect(sessions).toEqual([])
   })
 
-  it('discovers sessions across multiple channel databases', async () => {
+  // 15s timeout: real SQLite create-schema + insert across two DB files;
+  // the windows-latest GitHub runner trips the 5s default on cold filesystem
+  // I/O. Linux/macOS finish in ~80ms.
+  it('discovers sessions across multiple channel databases', { timeout: 15_000 }, async () => {
     const ocDir = join(tmpDir, 'opencode')
     await mkdir(ocDir, { recursive: true })
 
