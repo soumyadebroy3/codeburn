@@ -12,7 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, WebviewWindow, Window,
+    WindowEvent,
 };
 
 const POPOVER_LABEL: &str = "popover";
@@ -50,14 +51,17 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 /// the window has `focus: false` in tauri.conf.json — that prevents
 /// internal control clicks from triggering Focused(false), but the user's
 /// initial open does need focus so click-outside-to-dismiss works.
-fn show_popover(window: &WebviewWindow) {
+fn show_popover<R: Runtime>(window: &WebviewWindow<R>) {
     position_popover_near_tray(window);
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
 }
 
-fn hide_popover(window: &WebviewWindow) {
+/// Hide accepts `&Window` (the type the WindowEvent closure provides) so the
+/// outer-event handler can call it without a label lookup. Internally it just
+/// records the timestamp + hides — no WebviewWindow-specific calls needed.
+fn hide_window(window: &Window<impl Runtime>) {
     LAST_HIDDEN_MS.store(now_ms(), Ordering::Relaxed);
     let _ = window.hide();
 }
@@ -65,7 +69,8 @@ fn hide_popover(window: &WebviewWindow) {
 fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(POPOVER_LABEL) else { return };
     if window.is_visible().unwrap_or(false) {
-        hide_popover(&window);
+        LAST_HIDDEN_MS.store(now_ms(), Ordering::Relaxed);
+        let _ = window.hide();
         return;
     }
     // Debounce: if we just hid, the user's click is the same one that caused
@@ -81,7 +86,7 @@ fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
 /// approach on Windows; Tauri's tray click events don't include pixel
 /// coordinates, so we can't precisely anchor to the icon itself. Linux gets
 /// real coords from StatusNotifierItem::Activate, but we don't ship there.
-fn position_popover_near_tray(window: &WebviewWindow) {
+fn position_popover_near_tray<R: Runtime>(window: &WebviewWindow<R>) {
     const POPOVER_W: f64 = 380.0;
     const POPOVER_H: f64 = 560.0;
     const MARGIN: f64 = 12.0;
@@ -191,12 +196,12 @@ pub fn run() {
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     if window.label() == POPOVER_LABEL {
-                        hide_popover(window);
+                        hide_window(window);
                     }
                 }
                 WindowEvent::Focused(false) => {
                     if window.label() == POPOVER_LABEL {
-                        hide_popover(window);
+                        hide_window(window);
                     }
                 }
                 _ => {}
