@@ -340,6 +340,7 @@ extension ProviderFilter {
         switch self {
         case .all: return Theme.brandAccent
         case .claude: return Theme.categoricalClaude
+        case .cline: return Color(red: 0x23/255.0, green: 0x8A/255.0, blue: 0x7E/255.0)
         case .codex: return Theme.categoricalCodex
         case .cursor: return Theme.categoricalCursor
         case .copilot: return Color(red: 0x6D/255.0, green: 0x8F/255.0, blue: 0xA6/255.0)

@@ -97,6 +97,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 |---|----------|-----------|-----|
 | <img src="assets/providers/claude.jpg" width="28" /> | Claude Code | Yes | [claude.md](docs/providers/claude.md) |
 | <img src="assets/providers/claude.jpg" width="28" /> | Claude Desktop | Yes | [claude.md](docs/providers/claude.md) |
+| <img src="assets/providers/cline.svg" width="28" /> | Cline | Yes | [cline.md](docs/providers/cline.md) |
 | <img src="assets/providers/codex.png" width="28" /> | Codex (OpenAI) | Yes | [codex.md](docs/providers/codex.md) |
 | <img src="assets/providers/cursor.jpg" width="28" /> | Cursor | Yes | [cursor.md](docs/providers/cursor.md) |
 | <img src="assets/providers/cursor-agent.jpg" width="28" /> | cursor-agent | Yes | [cursor-agent.md](docs/providers/cursor-agent.md) |
@@ -428,7 +429,7 @@ CodeBurn reads these files, deduplicates messages (by API message ID for Claude,
 
 **OpenClaw** stores agent sessions as JSONL at `~/.openclaw/agents/*.jsonl`. Also checks legacy paths `.clawdbot`, `.moltbot`, `.moldbot`. Token usage comes from assistant message `usage` blocks; model from `modelId` or `message.model` fields.
 
-**Roo Code / KiloCode** are Cline-family VS Code extensions. CodeBurn reads `ui_messages.json` from each task directory in VS Code's `globalStorage`, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts.
+**Cline / Roo Code / KiloCode** are Cline-family coding agents. CodeBurn reads `ui_messages.json` from each task directory, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts. Cline scans both VS Code's `globalStorage/saoudrizwan.claude-dev` and `~/.cline/data`.
 
 **Kimi Code CLI** stores session logs under `$KIMI_SHARE_DIR/sessions/<workdir-hash>/<session-id>/` or `~/.kimi/sessions/<workdir-hash>/<session-id>/`. CodeBurn reads `wire.jsonl` `StatusUpdate.token_usage` records, maps `input_other`, `input_cache_read`, `input_cache_creation`, and `output` into the standard token columns, and includes subagent sessions under each session's `subagents/` folder.
 

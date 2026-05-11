@@ -5,6 +5,7 @@
 =======
 
 ### Added (CLI)
+<<<<<<< HEAD
 - **Kimi Code CLI provider.** CodeBurn now reads Kimi session usage from
   `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent
   `wire.jsonl` files. The parser consumes Kimi's official `StatusUpdate`
@@ -12,6 +13,50 @@
   `input_cache_creation`, `output`), normalizes Kimi tool names such as
   `Shell`, `ReadFile`, and `WriteFile`, and maps hidden managed Kimi Code
   model aliases to priced Kimi K2 entries.
+=======
+- **Cline provider support.** CodeBurn now reads Cline task usage from both
+  VS Code globalStorage (`saoudrizwan.claude-dev`) and Cline's
+  `~/.cline/data` task root. It reuses the existing Cline-family parser for
+  `ui_messages.json` usage entries, deduplicates migrated tasks by the newest
+  `ui_messages.json`, and exposes Cline in CLI provider filters, docs, and the
+  macOS menubar provider tabs. Closes #130.
+- **Multiple Claude config directories.** Set `CLAUDE_CONFIG_DIRS` to an
+  OS-delimited list of paths (`:`-separated on POSIX, `;`-separated on
+  Windows) to scan more than one Claude data directory in a single run.
+  Sessions across every configured directory roll up into one project row
+  per project, so a user with `~/.claude-work` and `~/.claude-personal`
+  who works on the same repo from both accounts sees one combined row
+  rather than two split rows. `~` is expanded; missing or unreadable
+  directories in the list are skipped instead of aborting the scan; if
+  every listed entry is unreadable a one-line hint is written to stderr
+  so a misplaced delimiter does not silently produce zero rows.
+  Precedence: `CLAUDE_CONFIG_DIRS` > `CLAUDE_CONFIG_DIR` > `~/.claude`.
+  As part of this change `~` and `~/foo` are now also expanded in
+  `CLAUDE_CONFIG_DIR` (previously the value was passed through verbatim,
+  which only worked when the shell expanded `~` before exporting).
+  Closes #208.
+- **`codeburn models` command.** Per-model breakdown across all providers,
+  one row per (provider, model), sorted by cost. Each row carries Input,
+  Output, Cache Write, Cache Read, Total, and Cost columns plus a Top Task
+  cell showing the dominant task category and its cost share (e.g.
+  `Coding (42%)`). Pass `--by-task` to explode each model into one row per
+  task type, with provider/model cells blanked on subsequent rows of the
+  same group and a horizontal divider between groups. Filters: `--period`
+  (default `30days`), `--from/--to`, `--provider`, `--task`, `--top`,
+  `--min-cost`, `--no-totals`. Output formats: `table` (Unicode box-drawn,
+  default), `markdown` (GitHub-flavored, copy-paste friendly), `json`,
+  `csv`. The table renderer auto-sizes every column to its content and
+  drops cache columns first, then input/output, then top-task when the
+  terminal is too narrow to fit the full set. Headers are cyan, totals row
+  is yellow, provider name is dim. Inspired by tokscale's per-model table
+  and ccusage's responsive cli-table3 layout, ported to plain Node with
+  no new runtime dependency.
+- **Per-day one-shot data in `--format json`.** Each entry of `daily[]` now
+  carries `turns`, `editTurns`, `oneShotTurns`, and `oneShotRate` (0-100,
+  one decimal, `null` when no edit turns). Counts match the existing
+  period-level `activities[]` rollup so a consumer can sum across days and
+  reconcile. Closes #279.
+>>>>>>> 9187bc5 (Add Cline provider)
 
 ## 0.9.8 - 2026-05-10
 >>>>>>> 78cbfd3 (Add Kimi provider)
