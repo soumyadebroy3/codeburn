@@ -14,7 +14,7 @@
 <p align="center"><sub>Fork of <a href="https://github.com/getagentseal/codeburn">getagentseal/codeburn</a> with hardened git invocation, SonarQube quality-gated builds, plan-aware leverage UX, multi-provider plan auto-detect, and an HTML report. See <a href="#fork-notes">Fork notes</a>.</sub></p>
 
 
-CodeBurn tracks token usage, cost, and performance across **18 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
+CodeBurn tracks token usage, cost, and performance across **19 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
 Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads session data directly from disk and prices every call using [LiteLLM](https://github.com/BerriAI/litellm).
 
@@ -97,6 +97,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/cursor.jpg" width="28" /> | Cursor | Yes | [cursor.md](docs/providers/cursor.md) |
 | <img src="assets/providers/cursor-agent.jpg" width="28" /> | cursor-agent | Yes | [cursor-agent.md](docs/providers/cursor-agent.md) |
 | <img src="assets/providers/gemini.png" width="28" /> | Gemini CLI | Yes | [gemini.md](docs/providers/gemini.md) |
+| <img src="assets/providers/mistral-vibe.svg" width="28" /> | Mistral Vibe | Yes | [mistral-vibe.md](docs/providers/mistral-vibe.md) |
 | <img src="assets/providers/copilot.jpg" width="28" /> | GitHub Copilot | Yes | [copilot.md](docs/providers/copilot.md) |
 | <img src="assets/providers/kiro.png" width="28" /> | Kiro | Yes | [kiro.md](docs/providers/kiro.md) |
 | <img src="assets/providers/opencode.png" width="28" /> | OpenCode | Yes | [opencode.md](docs/providers/opencode.md) |
@@ -124,6 +125,8 @@ The `--provider` flag filters any command to a single provider: `codeburn report
 **Cursor** reads token usage from its local SQLite database. Since Cursor's "Auto" mode hides the actual model used, costs are estimated using Sonnet pricing (labeled "Auto (Sonnet est.)" in the dashboard). The Cursor view shows a Languages panel instead of Core Tools/Shell/MCP panels, since Cursor does not log individual tool calls. First run on a large Cursor database may take up to a minute; results are cached and subsequent runs are instant.
 
 **Gemini CLI** stores sessions as single JSON files. Each session embeds real token counts (input, output, cached, thoughts) per message, so no estimation is needed. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
+
+**Mistral Vibe** stores sessions as folders under `~/.vibe/logs/session/` (or `$VIBE_HOME/logs/session/`). CodeBurn reads cumulative prompt/completion totals and model pricing from `meta.json`, then reads `messages.jsonl` for the first user prompt and assistant tool calls. Subagent sessions under `agents/` are counted as separate Vibe sessions.
 
 **Kiro** stores conversations as `.chat` JSON files. Token counts are estimated from content length. The underlying model is not exposed, so sessions are labeled `kiro-auto` and costed at Sonnet rates.
 
@@ -380,6 +383,8 @@ These are starting points, not verdicts. A 60% cache hit on a single experimenta
 
 **Gemini CLI** stores sessions as single JSON files at `~/.gemini/tmp/<project>/chats/session-*.json`. Each session embeds real token counts (input, output, cached, thoughts) per message. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
 
+**Mistral Vibe** stores session folders at `~/.vibe/logs/session/`. Each folder contains `meta.json` with cumulative prompt/completion token totals, model pricing, timestamps, and working directory, plus `messages.jsonl` with user prompts and assistant tool calls. CodeBurn emits one record per Vibe session because the source data is cumulative, not per assistant turn.
+
 **OpenClaw** stores agent sessions as JSONL at `~/.openclaw/agents/*.jsonl`. Also checks legacy paths `.clawdbot`, `.moltbot`, `.moldbot`. Token usage comes from assistant message `usage` blocks; model from `modelId` or `message.model` fields.
 
 **Roo Code / KiloCode** are Cline-family VS Code extensions. CodeBurn reads `ui_messages.json` from each task directory in VS Code's `globalStorage`, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts.
@@ -394,6 +399,7 @@ CodeBurn deduplicates messages (by API message ID for Claude, by cumulative toke
 | `CODEX_HOME` | Override Codex data directory (default: `~/.codex`) |
 | `FACTORY_DIR` | Override Droid data directory (default: `~/.factory`) |
 | `QWEN_DATA_DIR` | Override Qwen data directory (default: `~/.qwen/projects`) |
+| `VIBE_HOME` | Override Mistral Vibe home directory (default: `~/.vibe`) |
 
 ## Project Structure
 

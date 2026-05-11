@@ -17,6 +17,7 @@ For the architectural picture, see `../architecture.md`.
 | [Gemini](gemini.md) | JSON / JSONL | `src/providers/gemini.ts` | none |
 | [KiloCode](kilo-code.md) | JSON | `src/providers/kilo-code.ts` | `tests/providers/kilo-code.test.ts` |
 | [Kiro](kiro.md) | JSON | `src/providers/kiro.ts` | `tests/providers/kiro.test.ts` |
+| [Mistral Vibe](mistral-vibe.md) | JSON / JSONL | `src/providers/mistral-vibe.ts` | `tests/providers/mistral-vibe.test.ts` |
 | [OpenClaw](openclaw.md) | JSONL | `src/providers/openclaw.ts` | `tests/providers/openclaw.test.ts` |
 | [Pi](pi.md) | JSONL | `src/providers/pi.ts` | `tests/providers/pi.test.ts` |
 | [OMP](omp.md) | JSONL | `src/providers/pi.ts` | `tests/providers/omp.test.ts` |
