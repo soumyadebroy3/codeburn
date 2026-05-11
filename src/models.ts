@@ -224,7 +224,19 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'cline-auto':                    'claude-sonnet-4-5',
   'openclaw-auto':                 'claude-sonnet-4-5',
   'qwen-auto':                     'claude-sonnet-4-5',
-  // Cursor emits dot-version tier-last names
+  'kimi-auto':                     'kimi-k2-thinking',
+  'kimi-code':                     'kimi-k2-thinking',
+  'kimi-for-coding':               'kimi-k2-thinking',
+  // Cursor emits dot-version tier-last names plus tier/reasoning suffixes
+  // that LiteLLM does not index (`-high`, `-low`, `-medium`, `-thinking`,
+  // `-high-thinking`, `-fast-mode`). Missing aliases here surface as $0 in
+  // the dashboard for users on non-Auto models (issue #159). Sources: the
+  // display map at `src/providers/cursor.ts:modelDisplayNames`, Cursor's
+  // public model docs at https://cursor.com/docs/models, and forum bug
+  // reports that quote literal slugs (e.g. forum.cursor.com/t/154933).
+  'claude-4-sonnet':                'claude-sonnet-4',
+  'claude-4-sonnet-1m':             'claude-sonnet-4',
+  'claude-4.5-sonnet':              'claude-sonnet-4-5',
   'claude-4.6-sonnet':              'claude-sonnet-4-6',
   'claude-4.5-sonnet-thinking':     'claude-sonnet-4-5',
   'claude-4-sonnet-thinking':       'claude-sonnet-4-5',
@@ -385,6 +397,7 @@ const autoModelNames: Record<string, string> = {
   'cline-auto': 'Cline (auto)',
   'openclaw-auto': 'OpenClaw (auto)',
   'qwen-auto': 'Qwen (auto)',
+  'kimi-auto': 'Kimi (auto)',
 }
 
 const SHORT_NAMES: Record<string, string> = {
@@ -428,6 +441,17 @@ const SHORT_NAMES: Record<string, string> = {
   'gemini-3-flash-preview': 'Gemini 3 Flash',
   'gemini-2.5-pro': 'Gemini 2.5 Pro',
   'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'kimi-k2-thinking-turbo': 'Kimi K2 Thinking Turbo',
+  'kimi-k2-thinking': 'Kimi K2 Thinking',
+  'kimi-thinking-preview': 'Kimi Thinking',
+  'kimi-k2.6': 'Kimi K2.6',
+  'kimi-k2.5': 'Kimi K2.5',
+  'kimi-k2p5': 'Kimi K2.5',
+  'kimi-k2-instruct': 'Kimi K2 Instruct',
+  'kimi-k2-0905': 'Kimi K2',
+  'kimi-k2': 'Kimi K2',
+  'kimi-latest': 'Kimi Latest',
+  'moonshot-v1': 'Moonshot v1',
   'deepseek-coder-max': 'DeepSeek Coder Max',
   'deepseek-coder': 'DeepSeek Coder',
   'deepseek-r1': 'DeepSeek R1',

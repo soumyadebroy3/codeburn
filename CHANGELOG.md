@@ -1,6 +1,20 @@
 # Changelog
 
 ## Unreleased
+<<<<<<< HEAD
+=======
+
+### Added (CLI)
+- **Kimi Code CLI provider.** CodeBurn now reads Kimi session usage from
+  `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent
+  `wire.jsonl` files. The parser consumes Kimi's official `StatusUpdate`
+  token usage fields (`input_other`, `input_cache_read`,
+  `input_cache_creation`, `output`), normalizes Kimi tool names such as
+  `Shell`, `ReadFile`, and `WriteFile`, and maps hidden managed Kimi Code
+  model aliases to priced Kimi K2 entries.
+
+## 0.9.8 - 2026-05-10
+>>>>>>> 78cbfd3 (Add Kimi provider)
 
 ### Added (CLI)
 - **Mistral Vibe provider.** CodeBurn now reads Mistral Vibe session folders from `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`, using `meta.json` for cumulative prompt/completion tokens, model pricing, and timestamps, and `messages.jsonl` for user prompts and tool calls. Subagent sessions under a parent session's `agents/` folder are tracked separately. Ports upstream PR #301. Closes upstream #283.
