@@ -38,6 +38,7 @@ type SnapshotEntry = [number, number, number | null, number | null]
 const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WEB_SEARCH_COST = 0.01
+const ONE_HOUR_CACHE_WRITE_MULTIPLIER_FROM_FIVE_MINUTE_RATE = 1.6
 
 const FAST_MULTIPLIERS: Record<string, number> = {
   'claude-opus-4-7': 6,
@@ -347,11 +348,12 @@ export function calculateCost(
   webSearchRequests: number,
   speed: 'standard' | 'fast' = 'standard',
   /**
-   * 1-hour ephemeral cache writes (priced at 2× input). Default 0 so existing
-   * callers in third-party code continue to compile and compute the same
-   * numbers they did before the cache-tier split.
+   * Portion of `cacheCreationTokens` that was written to the 1-hour cache
+   * tier. Default 0 so callers that predate the cache-tier split keep
+   * compiling and produce the same total. Anthropic prices 1h cache
+   * writes at 1.6× the 5-minute write rate.
    */
-  cacheCreationTokens1h: number = 0,
+  oneHourCacheCreationTokens = 0,
 ): number {
   const costs = getModelCosts(model)
   if (!costs) {
@@ -377,12 +379,17 @@ export function calculateCost(
   // from real spend in aggregate totals. NaN is also handled here; the
   // arithmetic below short-circuits to 0 when any operand is non-finite.
   const safe = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0)
+  const safeOneHourCacheCreation = safe(oneHourCacheCreationTokens)
+  const safeCacheCreation = Math.max(safe(cacheCreationTokens), safeOneHourCacheCreation)
+  const safeFiveMinuteCacheCreation = Math.max(0, safeCacheCreation - safeOneHourCacheCreation)
 
   return multiplier * (
     safe(inputTokens) * costs.inputCostPerToken +
     safe(outputTokens) * costs.outputCostPerToken +
-    safe(cacheCreationTokens) * costs.cacheWriteCostPerToken +
-    safe(cacheCreationTokens1h) * costs.cacheWrite1hCostPerToken +
+    // 1h portion priced at 1.6× the 5m write rate; 5m portion = total - 1h.
+    // Previously double-counted 1h tokens by adding (total × 5m) + (1h × 2× input).
+    safeFiveMinuteCacheCreation * costs.cacheWriteCostPerToken +
+    safeOneHourCacheCreation * costs.cacheWriteCostPerToken * ONE_HOUR_CACHE_WRITE_MULTIPLIER_FROM_FIVE_MINUTE_RATE +
     safe(cacheReadTokens) * costs.cacheReadCostPerToken +
     safe(webSearchRequests) * costs.webSearchCostPerRequest
   )

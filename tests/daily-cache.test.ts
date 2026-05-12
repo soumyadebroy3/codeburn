@@ -77,14 +77,28 @@ describe('loadDailyCache', () => {
     expect(existsSync(join(TMP_CACHE_ROOT, 'daily-cache.json.v1.bak'))).toBe(true)
   })
 
-  it('migrates an older supported version by filling missing fields', async () => {
+  it('discards a v5 cache because cached Claude costs predate 1-hour cache pricing', async () => {
+    // MIN_SUPPORTED_VERSION was bumped to 6 with the 1h cache-write fix
+    // (upstream #317): pre-v6 cached cost totals priced all Claude cache
+    // writes at the 5-minute rate, so migrating would carry forward stale
+    // numbers. Test pins discard-and-recompute behavior.
     const saved = {
-      version: 2,
-      lastComputedDate: '2026-04-10',
+      version: 5,
+      lastComputedDate: '2026-05-01',
       days: [{
-        date: '2026-04-10', cost: 10, calls: 5, sessions: 2,
-        inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100,
-        models: { 'claude-opus-4-6': { calls: 5, cost: 10, inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100 } },
+        date: '2026-05-01',
+        cost: 0.37575,
+        calls: 1,
+        sessions: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 60_120,
+        editTurns: 0,
+        oneShotTurns: 0,
+        models: { 'Opus 4.7': { calls: 1, cost: 0.37575, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 60_120 } },
+        categories: {},
+        providers: { claude: { calls: 1, cost: 0.37575 } },
       }],
     }
     const { writeFile, mkdir } = await import('node:fs/promises')
@@ -92,14 +106,39 @@ describe('loadDailyCache', () => {
     await writeFile(join(TMP_CACHE_ROOT, 'daily-cache.json'), JSON.stringify(saved), 'utf-8')
     const cache = await loadDailyCache()
     expect(cache.version).toBe(DAILY_CACHE_VERSION)
-    expect(cache.days).toHaveLength(1)
-    expect(cache.days[0].date).toBe('2026-04-10')
-    expect(cache.days[0].cost).toBe(10)
-    expect(cache.days[0].editTurns).toBe(0)
-    expect(cache.days[0].oneShotTurns).toBe(0)
-    expect(cache.days[0].categories).toEqual({})
-    expect(cache.days[0].providers).toEqual({})
-    expect(cache.days[0].models['claude-opus-4-6'].calls).toBe(5)
+    expect(cache.days).toEqual([])
+    expect(cache.lastComputedDate).toBeNull()
+    expect(existsSync(join(TMP_CACHE_ROOT, 'daily-cache.json.v5.bak'))).toBe(true)
+  })
+
+  it('discards a v5 cache because cached Claude costs predate 1-hour cache pricing', async () => {
+    const saved = {
+      version: 5,
+      lastComputedDate: '2026-05-01',
+      days: [{
+        date: '2026-05-01',
+        cost: 0.37575,
+        calls: 1,
+        sessions: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 60_120,
+        editTurns: 0,
+        oneShotTurns: 0,
+        models: { 'Opus 4.7': { calls: 1, cost: 0.37575, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 60_120 } },
+        categories: {},
+        providers: { claude: { calls: 1, cost: 0.37575 } },
+      }],
+    }
+    const { writeFile, mkdir } = await import('fs/promises')
+    await mkdir(TMP_CACHE_ROOT, { recursive: true })
+    await writeFile(join(TMP_CACHE_ROOT, 'daily-cache.json'), JSON.stringify(saved), 'utf-8')
+    const cache = await loadDailyCache()
+    expect(cache.version).toBe(DAILY_CACHE_VERSION)
+    expect(cache.days).toEqual([])
+    expect(cache.lastComputedDate).toBeNull()
+    expect(existsSync(join(TMP_CACHE_ROOT, 'daily-cache.json.v5.bak'))).toBe(true)
   })
 
   it('round-trips a valid cache through save and load', async () => {

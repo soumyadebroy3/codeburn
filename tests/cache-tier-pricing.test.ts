@@ -24,17 +24,18 @@ describe('cache-tier pricing — Anthropic-correct math', () => {
   })
 
   it('analytical cost for Opus 4.7 with mixed cache tiers', () => {
-    // 1M tokens of each — easy mental math: input=$5, output=$25, 5m=$6.25,
-    // 1h=$10, cache_read=$0.50.
+    // 1M of each tier — input=$5, output=$25, 5m=$6.25, 1h=$10, cache_read=$0.50.
+    // New contract (upstream #317): param 4 is TOTAL cache creation tokens
+    // (incl. 1h); param 8 is the 1h portion. So 1M 5m + 1M 1h ⇒ total=2M, 1h=1M.
     const cost = calculateCost(
       'claude-opus-4-7',
       1 * M,    // input
       1 * M,    // output
-      1 * M,    // 5m cache writes
+      2 * M,    // total cache writes (1M 5m + 1M 1h)
       1 * M,    // cache reads
       0,        // web search
       'standard',
-      1 * M,    // 1h cache writes
+      1 * M,    // of which 1h cache writes
     )
     // 5 + 25 + 6.25 + 0.5 + 10 = 46.75
     expect(cost).toBeCloseTo(46.75, 2)
@@ -58,8 +59,10 @@ describe('cache-tier pricing — Anthropic-correct math', () => {
 
     // Legacy (pre-fix): treats the 2.5M as 5m, undercharges.
     const legacyCost = calculateCost('claude-opus-4-7', inp, out, cache_1h + cache_5m, cache_read, 0)
-    // Fixed: split correctly into 1h + 5m.
-    const fixedCost = calculateCost('claude-opus-4-7', inp, out, cache_5m, cache_read, 0, 'standard', cache_1h)
+    // Fixed: pass the total *and* the 1h portion so the 1h tokens get the
+    // 2× rate instead of the 1.25× rate. The new contract treats param 4
+    // as the total (incl. 1h), so we must pass cache_5m + cache_1h here too.
+    const fixedCost = calculateCost('claude-opus-4-7', inp, out, cache_5m + cache_1h, cache_read, 0, 'standard', cache_1h)
 
     expect(fixedCost).toBeGreaterThan(legacyCost)
     // The gap is exactly 0.75 × inputRate × cache_1h_tokens (the 2× minus 1.25× delta).
