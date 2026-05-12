@@ -145,7 +145,8 @@ const USER_MESSAGES_QUERY = `
 // the whole template. The original combined string is preserved as
 // BUBBLE_QUERY_SINCE for any caller that doesn't want the cap.
 const BUBBLE_QUERY_SINCE_HEAD = BUBBLE_QUERY_BASE + `
-    AND (json_extract(value, '$.createdAt') > ? OR json_extract(value, '$.createdAt') IS NULL)`
+    AND json_extract(value, '$.createdAt') IS NOT NULL
+    AND json_extract(value, '$.createdAt') > ?`
 const BUBBLE_QUERY_SINCE_TAIL = `
   ORDER BY ROWID ASC
 `
@@ -274,6 +275,10 @@ function parseBubbles(db: SqliteDatabase, seenKeys: Set<string>): { calls: Parse
       }
 
       const createdAt = row.created_at ?? ''
+      // Bubbles without a createdAt timestamp were defaulting to new Date()
+      // downstream, misattributing historical or undated usage to Today and
+      // inflating the daily chart. Skip them outright. Ports upstream #321.
+      if (!createdAt) continue
       const conversationId = row.conversation_id ?? 'unknown'
       // Use the SQLite row key (bubbleId:<unique>) as the dedup key.
       // Cursor mutates token counts on the row in place when streaming
@@ -290,7 +295,7 @@ function parseBubbles(db: SqliteDatabase, seenKeys: Set<string>): { calls: Parse
 
       const costUSD = calculateCost(pricingModel, inputTokens, outputTokens, 0, 0, 0)
 
-      const timestamp = createdAt || new Date().toISOString()
+      const timestamp = createdAt
       const userQuestion = takeUserMessage(userMessages, conversationId)
       const assistantText = blobToText(row.user_text)
       const userText = (userQuestion + ' ' + assistantText).trim()
