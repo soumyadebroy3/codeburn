@@ -11,6 +11,7 @@
     <a href="https://github.com/soumyadebroy3/codeburn/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/soumyadebroy3/codeburn/ci.yml?branch=main&label=CI" alt="CI status" /></a>
   </p>
 
+<<<<<<< HEAD
 <p align="center"><sub>Fork of <a href="https://github.com/getagentseal/codeburn">getagentseal/codeburn</a> with hardened git invocation, SonarQube quality-gated builds, plan-aware leverage UX, multi-provider plan auto-detect, and an HTML report. See <a href="#fork-notes">Fork notes</a>.</sub></p>
 
 <<<<<<< HEAD
@@ -18,6 +19,8 @@
 By task type, tool, model, MCP server, and project. Supports **Claude Code**, **Codex** (OpenAI), **Cursor**, **cursor-agent**, **OpenCode**, **Pi**, **Codebuff**, and **GitHub Copilot** with a provider plugin system. Tracks one-shot success rate per activity type so you can see where the AI nails it first try vs. burns tokens on edit/test/fix retries. Interactive TUI dashboard with gradient charts, responsive panels, and keyboard navigation. Native macOS menubar app in `mac/`. CSV/JSON export.
 >>>>>>> 3c0302b (feat(providers): add Codebuff provider)
 
+=======
+>>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))
 CodeBurn tracks token usage, cost, and performance across **19 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
 Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads session data directly from disk and prices every call using [LiteLLM](https://github.com/BerriAI/litellm).
@@ -104,6 +107,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/gemini.png" width="28" /> | Gemini CLI | Yes | [gemini.md](docs/providers/gemini.md) |
 | <img src="assets/providers/mistral-vibe.svg" width="28" /> | Mistral Vibe | Yes | [mistral-vibe.md](docs/providers/mistral-vibe.md) |
 | <img src="assets/providers/copilot.jpg" width="28" /> | GitHub Copilot | Yes | [copilot.md](docs/providers/copilot.md) |
+| <img src="assets/providers/ibm-bob.svg" width="28" /> | IBM Bob | Yes | [ibm-bob.md](docs/providers/ibm-bob.md) |
 | <img src="assets/providers/kiro.png" width="28" /> | Kiro | Yes | [kiro.md](docs/providers/kiro.md) |
 | <img src="assets/providers/opencode.png" width="28" /> | OpenCode | Yes | [opencode.md](docs/providers/opencode.md) |
 | <img src="assets/providers/openclaw.jpg" width="28" /> | OpenClaw | Yes | [openclaw.md](docs/providers/openclaw.md) |
@@ -120,7 +124,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 
 Paths shown are for macOS. Linux and Windows equivalents are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/soumyadebroy3/codeburn/issues).
 
-Provider logos are trademarks of their respective owners. The icon set was sourced from [tokscale](https://github.com/junhoyeo/tokscale) (MIT) plus official vendor assets, used under nominative fair use for the purpose of identifying supported tools.
+Provider logos are trademarks of their respective owners. The icon set was sourced from [tokscale](https://github.com/junhoyeo/tokscale) (MIT), official vendor assets, and simple provider identifiers, used under nominative fair use for the purpose of identifying supported tools.
 
 CodeBurn auto-detects which AI coding tools you use. If multiple providers have session data on disk, press `p` in the dashboard to toggle between them.
 
@@ -429,7 +433,13 @@ CodeBurn reads these files, deduplicates messages (by API message ID for Claude,
 
 **OpenClaw** stores agent sessions as JSONL at `~/.openclaw/agents/*.jsonl`. Also checks legacy paths `.clawdbot`, `.moltbot`, `.moldbot`. Token usage comes from assistant message `usage` blocks; model from `modelId` or `message.model` fields.
 
+<<<<<<< HEAD
 **Cline / Roo Code / KiloCode** are Cline-family coding agents. CodeBurn reads `ui_messages.json` from each task directory, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts. Cline scans both VS Code's `globalStorage/saoudrizwan.claude-dev` and `~/.cline/data`.
+=======
+**IBM Bob** stores IDE task history in `User/globalStorage/ibm.bob-code/tasks/<task-id>/` under the IBM Bob application data directory. CodeBurn reads `ui_messages.json` for API request token/cost records and `api_conversation_history.json` for the selected model, with support for both GA (`IBM Bob`) and preview (`Bob-IDE`) app data folders.
+
+**Roo Code / KiloCode** are Cline-family VS Code extensions. CodeBurn reads `ui_messages.json` from each task directory in VS Code's `globalStorage`, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts.
+>>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))
 
 **Kimi Code CLI** stores session logs under `$KIMI_SHARE_DIR/sessions/<workdir-hash>/<session-id>/` or `~/.kimi/sessions/<workdir-hash>/<session-id>/`. CodeBurn reads `wire.jsonl` `StatusUpdate.token_usage` records, maps `input_other`, `input_cache_read`, `input_cache_creation`, and `output` into the standard token columns, and includes subagent sessions under each session's `subagents/` folder.
 

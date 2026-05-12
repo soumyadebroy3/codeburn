@@ -32,6 +32,8 @@ export type ParsedProviderCall = {
   deduplicationKey: string
   userMessage: string
   sessionId: string
+  project?: string
+  projectPath?: string
 }
 
 export type Provider = {

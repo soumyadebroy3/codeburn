@@ -570,7 +570,7 @@ async function parseProviderSources(
   const provider = await getProvider(providerName)
   if (!provider) return []
 
-  const sessionMap = new Map<string, { project: string; turns: ClassifiedTurn[] }>()
+  const sessionMap = new Map<string, { project: string; projectPath?: string; turns: ClassifiedTurn[] }>()
 
   try {
     for (const source of sources) {
@@ -594,13 +594,15 @@ async function parseProviderSources(
 
         const turn = providerCallToTurn(call)
         const classified = classifyTurn(turn)
-        const key = `${providerName}:${call.sessionId}:${source.project}`
+        const project = call.project ?? source.project
+        const key = `${providerName}:${call.sessionId}:${project}`
 
         const existing = sessionMap.get(key)
         if (existing) {
           existing.turns.push(classified)
+          if (!existing.projectPath && call.projectPath) existing.projectPath = call.projectPath
         } else {
-          sessionMap.set(key, { project: source.project, turns: [classified] })
+          sessionMap.set(key, { project, projectPath: call.projectPath, turns: [classified] })
         }
       }
     }
@@ -612,22 +614,26 @@ async function parseProviderSources(
     }
   }
 
-  const projectMap = new Map<string, SessionSummary[]>()
-  for (const [key, { project, turns }] of sessionMap) {
+  const projectMap = new Map<string, { projectPath?: string; sessions: SessionSummary[] }>()
+  for (const [key, { project, projectPath, turns }] of sessionMap) {
     const sessionId = key.split(':')[1] ?? key
     const session = buildSessionSummary(sessionId, project, turns)
     if (session.apiCalls > 0) {
-      const existing = projectMap.get(project) ?? []
-      existing.push(session)
-      projectMap.set(project, existing)
+      const existing = projectMap.get(project)
+      if (existing) {
+        existing.sessions.push(session)
+        if (!existing.projectPath && projectPath) existing.projectPath = projectPath
+      } else {
+        projectMap.set(project, { projectPath, sessions: [session] })
+      }
     }
   }
 
   const projects: ProjectSummary[] = []
-  for (const [dirName, sessions] of projectMap) {
+  for (const [dirName, { projectPath, sessions }] of projectMap) {
     projects.push({
       project: dirName,
-      projectPath: unsanitizePath(dirName),
+      projectPath: projectPath ?? unsanitizePath(dirName),
       sessions,
       totalCostUSD: sessions.reduce((s, sess) => s + sess.totalCostUSD, 0),
       totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),

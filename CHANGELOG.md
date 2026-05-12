@@ -2,7 +2,21 @@
 
 ## Unreleased
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+
+### Added (CLI)
+- **IBM Bob provider.** CodeBurn now discovers IBM Bob IDE task history from
+  `User/globalStorage/ibm.bob-code/tasks/<task-id>/` under both the GA
+  `IBM Bob` application data folder and preview-era `Bob-IDE` folder. The
+  provider reuses the Cline-family `ui_messages.json` parser for token/cost
+  records, reads `api_conversation_history.json` for model tags when present,
+  falls back to `ibm-bob-auto` pricing otherwise, and appears in CLI,
+  dashboard, JSON, docs, and the macOS provider tabs. Closes #248.
+
+## 0.9.8 - 2026-05-10
+>>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))
 
 ### Added (CLI)
 <<<<<<< HEAD
