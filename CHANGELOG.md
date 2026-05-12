@@ -7,6 +7,7 @@
 =======
 
 ### Added (CLI)
+<<<<<<< HEAD
 - **IBM Bob provider.** CodeBurn now discovers IBM Bob IDE task history from
   `User/globalStorage/ibm.bob-code/tasks/<task-id>/` under both the GA
   `IBM Bob` application data folder and preview-era `Bob-IDE` folder. The
@@ -14,6 +15,31 @@
   records, reads `api_conversation_history.json` for model tags when present,
   falls back to `ibm-bob-auto` pricing otherwise, and appears in CLI,
   dashboard, JSON, docs, and the macOS provider tabs. Closes #248.
+=======
+- **IBM Bob provider.** Discovers IBM Bob IDE task history, reuses the
+  Cline-family parser for token/cost records, extracts model tags and
+  workspace-based project names from session data. Closes #248.
+
+### Fixed (CLI)
+- **Claude 1-hour cache write pricing.** 1-hour cache writes are now priced
+  at 2x base input (previously used the 5-minute 1.25x rate for all writes).
+  Daily cache bumped to v6 so stale totals are recomputed. Closes #276.
+- **OpenCode MCP usage now counted.** OpenCode stores MCP tool calls as
+  `<server>_<tool>` names, which the shared MCP pipeline did not recognize.
+  The provider now normalizes these to the canonical `mcp__<server>__<tool>`
+  form so MCP breakdowns and `optimize` work correctly. Closes #308.
+- **Antigravity Windows language-server discovery.** Antigravity detection now
+  supports Windows process discovery, `--extension_server_port`,
+  `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped and
+  unwrapped Connect-RPC response shapes. Closes #249.
+- **Mangled project names in dashboard.** The By Project and Top Sessions
+  panels decoded slugs by splitting on `-`, which broke directory names
+  containing dashes or dots (e.g. `my-project` rendered as `my/project`).
+  Now uses the real project path instead. Closes #196.
+- **Cursor undated bubble rows misattributed to Today.** Bubble rows without
+  a `createdAt` timestamp were defaulting to the current date, inflating
+  Today's spend. Now skipped at both the SQL and application level.
+>>>>>>> 929c66e (Fix Antigravity Windows discovery)
 
 ## 0.9.8 - 2026-05-10
 >>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))

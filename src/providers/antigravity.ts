@@ -15,7 +15,7 @@ const CACHE_VERSION = 2
 const RPC_TIMEOUT_MS = 5000
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
-type ServerInfo = {
+export type ServerInfo = {
   port: number
   csrfToken: string
 }
@@ -32,7 +32,7 @@ type UsageEntry = {
   responseId?: string
 }
 
-type GeneratorMetadata = {
+export type GeneratorMetadata = {
   stepIndices?: number[]
   chatModel?: {
     model: string
@@ -40,6 +40,20 @@ type GeneratorMetadata = {
     chatStartMetadata?: {
       createdAt?: string
     }
+  }
+}
+
+type ModelMapResponse = {
+  models?: Record<string, { model?: string }>
+  response?: {
+    models?: Record<string, { model?: string }>
+  }
+}
+
+type GeneratorMetadataResponse = {
+  generatorMetadata?: GeneratorMetadata[]
+  response?: {
+    generatorMetadata?: GeneratorMetadata[]
   }
 }
 
@@ -81,6 +95,13 @@ class LoopbackOnlyAgent extends https.Agent {
   }
 }
 
+// Flag names the Antigravity language server uses for its HTTPS port + CSRF
+// token. The plain-underscore names are the macOS/Linux pair; the
+// `extension_*` names are what the Windows VS Code extension passes.
+// Upstream PR #324.
+const SERVER_PORT_FLAGS = ['https_server_port', 'extension_server_port']
+const CSRF_TOKEN_FLAGS = ['csrf_token', 'extension_server_csrf_token']
+
 function getAgent(): https.Agent {
   if (!httpsAgent) httpsAgent = new LoopbackOnlyAgent()
   return httpsAgent
@@ -92,6 +113,72 @@ function getCacheDir(): string {
 
 function getCachePath(): string {
   return join(getCacheDir(), 'antigravity-results.json')
+}
+
+function execFileText(command: string, args: string[], timeout = 3000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: 'utf-8', timeout, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err)
+      else resolve(stdout)
+    })
+  })
+}
+
+function getFlagValue(line: string, names: string[]): string | null {
+  for (const name of names) {
+    const match = line.match(new RegExp(`--${name}(?:=|\\s+)(?:"([^"]+)"|'([^']+)'|([^\\s]+))`, 'i'))
+    const value = match?.[1] ?? match?.[2] ?? match?.[3]
+    if (value && !value.startsWith('--')) return value
+  }
+  return null
+}
+
+function isLikelyCsrfToken(value: string): boolean {
+  return value.length >= 16 && /^[A-Za-z0-9._~:/+=-]+$/.test(value)
+}
+
+export function parseAntigravityServerInfoFromLine(line: string): ServerInfo | null {
+  const lower = line.toLowerCase()
+  if (!lower.includes('language_server') || !lower.includes('antigravity')) return null
+
+  const rawPort = getFlagValue(line, SERVER_PORT_FLAGS)
+  const csrfToken = getFlagValue(line, CSRF_TOKEN_FLAGS)
+  if (!rawPort || !csrfToken) return null
+  if (!isLikelyCsrfToken(csrfToken)) return null
+
+  const port = Number(rawPort)
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
+
+  return { port, csrfToken }
+}
+
+export function parseAntigravityServerInfo(lines: string[]): ServerInfo | null {
+  for (const line of lines) {
+    const server = parseAntigravityServerInfoFromLine(line)
+    if (server) return server
+  }
+  return null
+}
+
+export function extractAntigravityModelMap(resp: unknown): ModelMap {
+  if (!resp || typeof resp !== 'object') return {}
+  const data = resp as ModelMapResponse
+  const models = data.response?.models ?? data.models
+  const map: ModelMap = {}
+  if (!models) return map
+  for (const [key, info] of Object.entries(models)) {
+    if (info && typeof info === 'object' && typeof info.model === 'string') {
+      map[info.model] = key
+    }
+  }
+  return map
+}
+
+export function extractAntigravityGeneratorMetadata(resp: unknown): GeneratorMetadata[] {
+  if (!resp || typeof resp !== 'object') return []
+  const data = resp as GeneratorMetadataResponse
+  const metadata = data.response?.generatorMetadata ?? data.generatorMetadata
+  return Array.isArray(metadata) ? metadata : []
 }
 
 async function loadCache(): Promise<AntigravityCache> {
@@ -151,29 +238,38 @@ async function flushCache(liveCascadeIds?: Set<string>): Promise<void> {
   } catch { /* best-effort */ }
 }
 
+async function readProcessCommandLines(): Promise<string[]> {
+  if (process.platform === 'win32') {
+    // Pin to the system32 PowerShell so a hostile entry on PATH can't
+    // shadow `powershell.exe` and return forged process listings. Falls
+    // back to the bare name only when the system path env var is missing,
+    // which is exceptional enough that further hardening would just
+    // produce a "feature broken on this Windows" footgun.
+    const systemRoot = process.env['SystemRoot'] || process.env['windir'] || ''
+    const powershell = systemRoot
+      ? join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+      : 'powershell.exe'
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like '*language_server*' -and $_.CommandLine -like '*antigravity*' } | ForEach-Object { $_.CommandLine }",
+    ].join('; ')
+    const output = await execFileText(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], 5000)
+    return output.split(/\r?\n/)
+  }
+
+  // Absolute /bin/ps so a hostile PATH entry can't shadow `ps` and either
+  // exfiltrate process info or return forged output to the parser.
+  const output = await execFileText('/bin/ps', ['-ww', '-eo', 'args'])
+  return output.split('\n')
+}
+
 async function detectServer(): Promise<ServerInfo | null> {
   if (cachedServer !== undefined) return cachedServer
   try {
-    // Use the absolute /bin/ps path so a hostile entry on PATH can't
-    // shadow `ps` and exfiltrate process info or return forged output.
-    const output = await new Promise<string>((resolve, reject) => {
-      execFile('/bin/ps', ['-eo', 'args'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
-        if (err) reject(err)
-        else resolve(stdout)
-      })
-    })
-    for (const line of output.split('\n')) {
-      if (!line.includes('language_server') || !line.includes('antigravity')) continue
-      if (!line.includes('--https_server_port')) continue
-
-      const csrfMatch = line.match(/--csrf_token\s+([0-9a-f-]{32,})/)
-      const portMatch = line.match(/--https_server_port\s+(\d+)/)
-      if (csrfMatch && portMatch) {
-        cachedServer = { csrfToken: csrfMatch[1]!, port: Number.parseInt(portMatch[1]!, 10) }
-        return cachedServer
-      }
-    }
-  } catch { /* ps failed or timed out */ }
+    cachedServer = parseAntigravityServerInfo(await readProcessCommandLines())
+    return cachedServer
+  } catch { /* process discovery failed or timed out */ }
   cachedServer = null
   return null
 }
@@ -228,20 +324,12 @@ async function rpc(server: ServerInfo, method: string, body: Record<string, unkn
 
 async function getModelMap(server: ServerInfo): Promise<ModelMap> {
   if (cachedModelMap) return cachedModelMap
-  const map: ModelMap = {}
   try {
-    const resp = await rpc(server, 'GetAvailableModels') as {
-      response?: { models?: Record<string, { model?: string }> }
-    }
-    const models = resp?.response?.models
-    if (models) {
-      for (const [key, info] of Object.entries(models)) {
-        if (info.model) map[info.model] = key
-      }
-    }
+    cachedModelMap = extractAntigravityModelMap(await rpc(server, 'GetAvailableModels'))
+    return cachedModelMap
   } catch { /* best-effort */ }
-  cachedModelMap = map
-  return map
+  cachedModelMap = {}
+  return cachedModelMap
 }
 
 // Strip Antigravity-specific suffixes so the pricing DB can match
@@ -304,10 +392,9 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
 
       let metadata: GeneratorMetadata[]
       try {
-        const resp = await rpc(server, 'GetCascadeTrajectoryGeneratorMetadata', { cascadeId }) as {
-          generatorMetadata?: GeneratorMetadata[]
-        }
-        metadata = resp?.generatorMetadata ?? []
+        metadata = extractAntigravityGeneratorMetadata(
+          await rpc(server, 'GetCascadeTrajectoryGeneratorMetadata', { cascadeId }),
+        )
       } catch {
         if (cached) {
           for (const call of cached.calls) {
