@@ -464,7 +464,6 @@ program
     const period = toPeriod(opts.period)
     if (opts.format === 'json') {
       await loadPricing()
-      await hydrateCache()
       if (customRange) {
         const label = formatDateRangeLabel(opts.from, opts.to)
         const projects = filterProjectsByName(
@@ -478,7 +477,6 @@ program
       }
       return
     }
-    await hydrateCache()
     const customRangeLabel = customRange ? formatDateRangeLabel(opts.from, opts.to) : undefined
     await renderDashboard(period, opts.provider, opts.refresh, projectScope.filter, opts.exclude, customRange, customRangeLabel)
   })
@@ -684,7 +682,6 @@ program
     }
 
     if (opts.format === 'json') {
-      await hydrateCache()
       const todayData = buildPeriodData('today', fp(await parseAllSessions(getDateRange('today').range, pf)))
       const monthData = buildPeriodData('month', fp(await parseAllSessions(getDateRange('month').range, pf)))
       const { code, rate } = getCurrency()
@@ -706,7 +703,6 @@ program
       return
     }
 
-    await hydrateCache()
     const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
     // Read the plan so the status line can switch to "Month value" + leverage
     // verdict when the user is on a flat subscription instead of pay-as-you-go.
@@ -733,7 +729,6 @@ program
       await runJsonReport('today', opts.provider, projectScope.filter, opts.exclude)
       return
     }
-    await hydrateCache()
     await renderDashboard('today', opts.provider, opts.refresh, projectScope.filter, opts.exclude)
   })
 
@@ -753,7 +748,6 @@ program
       await runJsonReport('month', opts.provider, projectScope.filter, opts.exclude)
       return
     }
-    await hydrateCache()
     await renderDashboard('month', opts.provider, opts.refresh, projectScope.filter, opts.exclude)
   })
 
@@ -772,7 +766,6 @@ program
   .action(async (opts) => {
     assertFormat(opts.format, ['csv', 'json', 'html'], 'export')
     await loadPricing()
-    await hydrateCache()
     const pf = opts.provider
     // Resolve the effective project scope: explicit --project wins, then
     // --all-projects opts out, then auto-detect from cwd. The yield panel
@@ -1097,7 +1090,6 @@ program
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .action(async (opts) => {
     await loadPricing()
-    await hydrateCache()
     const { range, label } = getDateRange(opts.period)
     const projects = await parseAllSessions(range, opts.provider)
     await runOptimize(projects, label, range)
@@ -1110,7 +1102,6 @@ program
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .action(async (opts) => {
     await loadPricing()
-    await hydrateCache()
     const { range } = getDateRange(opts.period)
     await renderCompare(range, opts.provider)
   })
@@ -1122,7 +1113,6 @@ program
   .action(async (opts) => {
     const { computeYield, formatYieldSummary } = await import('./yield.js')
     await loadPricing()
-    await hydrateCache()
     const { range, label } = getDateRange(opts.period)
     console.log(`\n  Analyzing yield for ${label}...\n`)
     const summary = await computeYield(range, process.cwd())
