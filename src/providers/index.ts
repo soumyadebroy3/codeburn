@@ -11,108 +11,51 @@ import { qwen } from './qwen.js'
 import { rooCode } from './roo-code.js'
 import type { Provider, SessionSource } from './types.js'
 
-let antigravityProvider: Provider | null = null
-let antigravityLoadAttempted = false
-
-async function loadAntigravity(): Promise<Provider | null> {
-  if (antigravityLoadAttempted) return antigravityProvider
-  antigravityLoadAttempted = true
-  try {
-    const { antigravity } = await import('./antigravity.js')
-    antigravityProvider = antigravity
-    return antigravity
-  } catch {
-    return null
-  }
-}
-
-let gooseProvider: Provider | null = null
-let gooseLoadAttempted = false
-
-async function loadGoose(): Promise<Provider | null> {
-  if (gooseLoadAttempted) return gooseProvider
-  gooseLoadAttempted = true
-  try {
-    const { goose } = await import('./goose.js')
-    gooseProvider = goose
-    return goose
-  } catch {
-    return null
-  }
-}
-
-let cursorProvider: Provider | null = null
-let cursorLoadAttempted = false
-
-async function loadCursor(): Promise<Provider | null> {
-  if (cursorLoadAttempted) return cursorProvider
-  cursorLoadAttempted = true
-  try {
-    const { cursor } = await import('./cursor.js')
-    cursorProvider = cursor
-    return cursor
-  } catch {
-    return null
-  }
-}
-
-let opencodeProvider: Provider | null = null
-let opencodeLoadAttempted = false
-
-let cursorAgentProvider: Provider | null = null
-let cursorAgentLoadAttempted = false
-
-let crushProvider: Provider | null = null
-let crushLoadAttempted = false
-
-async function loadOpenCode(): Promise<Provider | null> {
-  if (opencodeLoadAttempted) return opencodeProvider
-  opencodeLoadAttempted = true
-  try {
-    const { opencode } = await import('./opencode.js')
-    opencodeProvider = opencode
-    return opencode
-  } catch {
-    return null
-  }
-}
-
-async function loadCursorAgent(): Promise<Provider | null> {
-  if (cursorAgentLoadAttempted) return cursorAgentProvider
-  cursorAgentLoadAttempted = true
-  try {
-    const { cursor_agent } = await import('./cursor-agent.js')
-    cursorAgentProvider = cursor_agent
-    return cursor_agent
-  } catch {
-    return null
-  }
-}
-
-async function loadCrush(): Promise<Provider | null> {
-  if (crushLoadAttempted) return crushProvider
-  crushLoadAttempted = true
-  try {
-    const { crush } = await import('./crush.js')
-    crushProvider = crush
-    return crush
-  } catch {
-    return null
-  }
-}
-
+/// Eagerly-imported providers: no native deps, cheap to load on every CLI invocation.
 const coreProviders: Provider[] = [claude, codex, copilot, droid, gemini, kiloCode, kiro, openclaw, pi, omp, qwen, rooCode]
 
+/// Lazy-loaded providers: open native sqlite / large json on disk, may fail when the
+/// underlying tool isn't installed. Each entry is a literal `() => import(...)` so the
+/// bundler can statically analyze module paths — do NOT compute the path from a string.
+/// Adding a provider here is a one-line change.
+type LazyProviderSpec = {
+  name: string
+  load: () => Promise<Record<string, unknown>>
+  exportName: string
+}
+
+const LAZY_PROVIDERS: readonly LazyProviderSpec[] = [
+  { name: 'antigravity',  load: () => import('./antigravity.js'),  exportName: 'antigravity' },
+  { name: 'goose',        load: () => import('./goose.js'),        exportName: 'goose' },
+  { name: 'cursor',       load: () => import('./cursor.js'),       exportName: 'cursor' },
+  { name: 'opencode',     load: () => import('./opencode.js'),     exportName: 'opencode' },
+  { name: 'cursor-agent', load: () => import('./cursor-agent.js'), exportName: 'cursor_agent' },
+  { name: 'crush',        load: () => import('./crush.js'),        exportName: 'crush' },
+]
+
+const lazyCache = new Map<string, Provider | null>()
+
+async function loadLazy(name: string): Promise<Provider | null> {
+  if (lazyCache.has(name)) return lazyCache.get(name) ?? null
+  const spec = LAZY_PROVIDERS.find(p => p.name === name)
+  if (!spec) {
+    lazyCache.set(name, null)
+    return null
+  }
+  try {
+    const mod = await spec.load()
+    const provider = (mod[spec.exportName] as Provider | undefined) ?? null
+    lazyCache.set(name, provider)
+    return provider
+  } catch {
+    lazyCache.set(name, null)
+    return null
+  }
+}
+
 export async function getAllProviders(): Promise<Provider[]> {
-  const [ag, gs, cursor, opencode, cursorAgent, crush] = await Promise.all([loadAntigravity(), loadGoose(), loadCursor(), loadOpenCode(), loadCursorAgent(), loadCrush()])
-  const all = [...coreProviders]
-  if (ag) all.push(ag)
-  if (gs) all.push(gs)
-  if (cursor) all.push(cursor)
-  if (opencode) all.push(opencode)
-  if (cursorAgent) all.push(cursorAgent)
-  if (crush) all.push(crush)
-  return all
+  const lazy = await Promise.all(LAZY_PROVIDERS.map(p => loadLazy(p.name)))
+  return [...coreProviders, ...lazy.filter((p): p is Provider => p != null)]
 }
 
 export const providers = coreProviders
@@ -131,29 +74,8 @@ export async function discoverAllSessions(providerFilter?: string): Promise<Sess
 }
 
 export async function getProvider(name: string): Promise<Provider | undefined> {
-  if (name === 'antigravity') {
-    const ag = await loadAntigravity()
-    return ag ?? undefined
-  }
-  if (name === 'goose') {
-    const gs = await loadGoose()
-    return gs ?? undefined
-  }
-  if (name === 'cursor') {
-    const cursor = await loadCursor()
-    return cursor ?? undefined
-  }
-  if (name === 'opencode') {
-    const oc = await loadOpenCode()
-    return oc ?? undefined
-  }
-  if (name === 'cursor-agent') {
-    const ca = await loadCursorAgent()
-    return ca ?? undefined
-  }
-  if (name === 'crush') {
-    const c = await loadCrush()
-    return c ?? undefined
+  if (LAZY_PROVIDERS.some(p => p.name === name)) {
+    return (await loadLazy(name)) ?? undefined
   }
   return coreProviders.find(p => p.name === name)
 }
