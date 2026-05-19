@@ -1012,8 +1012,19 @@ program
     }
 
     if (mode === 'reset') {
-      await clearPlan()
-      console.log('\n  Plan reset. API-pricing view is active.\n')
+      // `--provider all` (the default) clears every stored plan.
+      // `--provider <name>` removes only that provider's plan and leaves
+      // others in place. Matches upstream PR #300's `plan reset --provider`
+      // semantics. Errors are silent because clearPlan tolerates missing
+      // keys.
+      const scope = opts?.provider ?? 'all'
+      if (scope === 'all') {
+        await clearPlan()
+        console.log('\n  All plans reset. API-pricing view is active.\n')
+      } else {
+        await clearPlan(scope)
+        console.log(`\n  Plan reset for provider "${scope}". Other provider plans (if any) are retained.\n`)
+      }
       return
     }
 

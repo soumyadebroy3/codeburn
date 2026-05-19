@@ -134,10 +134,33 @@ export async function savePlans(plans: Record<string, Plan>): Promise<void> {
   await saveConfig(config)
 }
 
-export async function clearPlan(): Promise<void> {
+/// Clear plans. When `provider` is omitted, drops every stored plan
+/// (legacy single + per-provider map). When provider is specified, removes
+/// only that provider's entry from the `plans` map and falls back to the
+/// legacy single-plan field only when its provider matches. Matches the
+/// `plan reset [--provider <name>]` CLI semantics from upstream PR #300.
+export async function clearPlan(provider?: string): Promise<void> {
   const config = await readConfig()
-  delete config.plan
-  delete config.plans
+  if (!provider) {
+    delete config.plan
+    delete config.plans
+    await saveConfig(config)
+    return
+  }
+  if (config.plans) {
+    delete config.plans[provider]
+    if (Object.keys(config.plans).length === 0) delete config.plans
+  }
+  if (config.plan?.provider === provider) {
+    // If a different provider is still active in the multi-plan map, lift
+    // its newest entry to the legacy field so older readers still see a
+    // plan. Otherwise the legacy field is dropped.
+    const remaining = Object.values(config.plans ?? {}).sort((a, b) =>
+      (b.setAt ?? '').localeCompare(a.setAt ?? ''),
+    )
+    if (remaining[0]) config.plan = remaining[0]
+    else delete config.plan
+  }
   await saveConfig(config)
 }
 
