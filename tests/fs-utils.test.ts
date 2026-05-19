@@ -102,4 +102,37 @@ describe('readSessionLines', () => {
     const closed = await gen.return(undefined)
     expect(closed.done).toBe(true)
   })
+
+  it('handles a trailing line without a final newline', async () => {
+    const p = await tmpPath('first\nlast-no-newline')
+    const lines: string[] = []
+    for await (const line of readSessionLines(p)) lines.push(line)
+    expect(lines).toEqual(['first', 'last-no-newline'])
+  })
+
+  it('preserves embedded UTF-8 bytes that span chunk boundaries', async () => {
+    // 🔥 = F0 9F 94 A5 (4 bytes). With Buffer-based scanning, a multi-byte
+    // codepoint that lands across an internal chunk boundary must still
+    // decode correctly when we eventually toString('utf-8').
+    const p = await tmpPath('codeburn 🔥 hits hot path\n')
+    const lines: string[] = []
+    for await (const line of readSessionLines(p)) lines.push(line)
+    expect(lines).toEqual(['codeburn 🔥 hits hot path'])
+  })
+
+  it('yields a 5 MB single-line payload without OOM', async () => {
+    // Regression test for the OOM that prompted the buffer-based scanner.
+    // 5 MB is well below the prior failure threshold (~100 MB) but big
+    // enough to exercise the chunk-concat path.
+    const big = 'x'.repeat(5 * 1024 * 1024)
+    const p = await tmpPath(big + '\n')
+    let yielded = 0
+    let observedLen = 0
+    for await (const line of readSessionLines(p)) {
+      yielded++
+      observedLen = line.length
+    }
+    expect(yielded).toBe(1)
+    expect(observedLen).toBe(5 * 1024 * 1024)
+  })
 })

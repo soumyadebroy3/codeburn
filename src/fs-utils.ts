@@ -1,5 +1,5 @@
-import { open as openAsync } from 'node:fs/promises'
-import { openSync, closeSync, fstatSync, readFileSync } from 'node:fs'
+import { open as openAsync, stat } from 'node:fs/promises'
+import { openSync, closeSync, fstatSync, readFileSync, createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 // Hard cap well below V8's 512 MB string limit even with split('\n') doubling.
@@ -91,40 +91,72 @@ export function readSessionFileSync(filePath: string): string | null {
   }
 }
 
+/// Buffer-based newline scanner. Replaces the old readline path so a
+/// pathologically long line (100 MB+) doesn't build a ConsString tree that
+/// V8 can't flatten without exceeding heap. Scans raw Bytes with
+/// Buffer.indexOf(0x0a) and only allocates a string at yield time. Adapted
+/// from upstream PR (OOM fix); fork keeps the security-conscious cap and
+/// graceful-warn-on-failure contract.
 export async function* readSessionLines(filePath: string): AsyncGenerator<string> {
-  let handle
+  let size: number
   try {
-    handle = await openAsync(filePath, 'r')
-  } catch (err) {
-    warn(`open failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
-    return
-  }
-  try {
-    const s = await handle.stat()
-    if (s.size > MAX_STREAM_SESSION_FILE_BYTES) {
-      warn(`skipped oversize file ${filePath} (${s.size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`)
-      return
-    }
-    const stream = handle.createReadStream({ encoding: 'utf-8' })
-    const ownedHandle = handle
-    handle = undefined // stream now owns the fd
-    const rl = createInterface({ input: stream, crlfDelay: Infinity })
-    try {
-      for await (const line of rl) yield line
-    } catch (err) {
-      warn(`stream read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
-    } finally {
-      stream.destroy()
-      // createReadStream({autoClose:true}) closes the fd when stream ends/errors,
-      // but if the consumer abandons the generator early the FileHandle's GC
-      // close is what runs. Explicitly close here to avoid the deprecation.
-      try { await ownedHandle.close() } catch { /* fd may already be closed by stream */ }
-    }
+    size = (await stat(filePath)).size
   } catch (err) {
     warn(`stat failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
-  } finally {
-    if (handle) {
-      try { await handle.close() } catch { /* ignore */ }
+    return
+  }
+  if (size > MAX_STREAM_SESSION_FILE_BYTES) {
+    warn(`skipped oversize file ${filePath} (${size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`)
+    return
+  }
+
+  const stream = createReadStream(filePath)
+  // `parts` accumulates Buffer slices for an in-progress line. Concat
+  // happens once per complete line, so total resident memory tracks the
+  // longest single line — not the whole file as ConsString trees did.
+  let parts: Buffer[] = []
+  let len = 0
+
+  try {
+    for await (const raw of stream) {
+      const chunk = raw as Buffer
+      let pos = 0
+      while (pos < chunk.length) {
+        const nl = chunk.indexOf(0x0a, pos)
+        if (nl !== -1) {
+          if (pos < nl) {
+            parts.push(chunk.subarray(pos, nl))
+            len += nl - pos
+          }
+          pos = nl + 1
+          if (len === 0) {
+            // Empty line — yield empty string to preserve the old readline
+            // contract for consumers that count line numbers.
+            yield ''
+            continue
+          }
+          const buf = parts.length === 1 ? parts[0]! : Buffer.concat(parts, len)
+          parts = []
+          len = 0
+          // toString('utf-8') replaces invalid byte sequences with U+FFFD
+          // — same behavior as our node:sqlite UTF-8 hardening (#272).
+          yield buf.toString('utf-8')
+        } else {
+          const slice = chunk.subarray(pos)
+          parts.push(slice)
+          len += slice.length
+          pos = chunk.length
+        }
+      }
     }
+    // Trailing line with no final newline.
+    if (len > 0) {
+      const buf = parts.length === 1 ? parts[0]! : Buffer.concat(parts, len)
+      yield buf.toString('utf-8')
+    }
+  } catch (err) {
+    warn(`stream read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+  } finally {
+    stream.destroy()
   }
 }
