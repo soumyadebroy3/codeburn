@@ -64,6 +64,35 @@ const toolNameMap: Record<string, string> = {
   patch: 'Patch',
 }
 
+/// Normalize an OpenCode tool name into either:
+///   * the canonical built-in name (Bash, Read, Edit, ...)
+///   * an already-prefixed `mcp__server__tool` name (left alone)
+///   * a freshly-prefixed `mcp__server__tool` constructed from OpenCode's
+///     own `<server>_<tool>` storage convention
+///
+/// Why: OpenCode stores MCP tool calls as `<server>_<tool>` with no separate
+/// server field, so without this normalization MCP usage was invisible to
+/// the cross-provider MCP pipeline and to `codeburn optimize`. Built-in
+/// names are checked first so a built-in containing an `_` (none today, but
+/// defense-in-depth) can never be misinterpreted as an MCP call. Ports
+/// upstream PR #318. Closes upstream #308.
+function normalizeToolName(rawTool?: string): string {
+  if (!rawTool) return ''
+  if (rawTool.startsWith('mcp__')) return rawTool
+
+  const builtIn = toolNameMap[rawTool]
+  if (builtIn) return builtIn
+
+  const serverSeparator = rawTool.indexOf('_')
+  if (serverSeparator > 0 && serverSeparator < rawTool.length - 1) {
+    const server = rawTool.slice(0, serverSeparator)
+    const tool = rawTool.slice(serverSeparator + 1)
+    return `mcp__${server}__${tool}`
+  }
+
+  return rawTool
+}
+
 function sanitize(dir: string): string {
   return dir.replace(/^\//, '').replace(/\//g, '-')
 }
@@ -221,18 +250,26 @@ function createParser(
             cacheWrite: data.tokens?.cache?.write ?? 0,
           }
 
+          const msgParts = partsByMsg.get(msg.id) ?? []
+          const toolParts = msgParts.filter((p) => p.type === 'tool' && normalizeToolName(p.tool))
+          const hasTextOutput = msgParts.some((p) => p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0)
+          const hasActivity = hasTextOutput || toolParts.length > 0
+
           const allZero =
             tokens.input === 0 &&
             tokens.output === 0 &&
             tokens.reasoning === 0 &&
             tokens.cacheRead === 0 &&
             tokens.cacheWrite === 0
-          if (allZero && (data.cost ?? 0) === 0) continue
+          // Keep entries where the model produced visible activity (tool
+          // calls or text) even when token usage is zero — typical of
+          // OpenCode router calls (e.g. a /model switch) that don't bill
+          // tokens but still represent activity the user expects to see.
+          // Ports upstream PR #342.
+          if (allZero && (data.cost ?? 0) === 0 && !hasActivity) continue
 
-          const msgParts = partsByMsg.get(msg.id) ?? []
-          const toolParts = msgParts.filter((p) => p.type === 'tool')
           const tools = toolParts
-            .map((p) => toolNameMap[p.tool ?? ''] ?? p.tool ?? '')
+            .map((p) => normalizeToolName(p.tool))
             .filter(Boolean)
 
           const bashCommands = toolParts
