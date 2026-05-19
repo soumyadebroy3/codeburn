@@ -594,18 +594,29 @@ async function parseSessionFile(
 
 async function collectJsonlFiles(dirPath: string): Promise<string[]> {
   const files = await readdir(dirPath).catch(() => [])
-  const jsonlFiles = files.filter(f => f.endsWith('.jsonl')).map(f => join(dirPath, f))
+  const jsonlFiles = new Set(files.filter(f => f.endsWith('.jsonl')).map(f => join(dirPath, f)))
+
+  // Some providers (e.g. Kimi for its agent-call sessions) stash subagent
+  // .jsonl files in a `subagents/` subdirectory directly under the
+  // top-level session dir, not nested under each session-named entry.
+  // Scan both layouts and dedupe through a Set so a path that appears
+  // in both views isn't double-counted. Ports upstream PR #340.
+  const directSubagentsPath = join(dirPath, 'subagents')
+  const directSubFiles = await readdir(directSubagentsPath).catch(() => [])
+  for (const sf of directSubFiles) {
+    if (sf.endsWith('.jsonl')) jsonlFiles.add(join(directSubagentsPath, sf))
+  }
 
   for (const entry of files) {
     if (entry.endsWith('.jsonl')) continue
     const subagentsPath = join(dirPath, entry, 'subagents')
     const subFiles = await readdir(subagentsPath).catch(() => [])
     for (const sf of subFiles) {
-      if (sf.endsWith('.jsonl')) jsonlFiles.push(join(subagentsPath, sf))
+      if (sf.endsWith('.jsonl')) jsonlFiles.add(join(subagentsPath, sf))
     }
   }
 
-  return jsonlFiles
+  return [...jsonlFiles]
 }
 
 async function scanProjectDirs(dirs: Array<{ path: string; name: string }>, seenMsgIds: Set<string>, dateRange?: DateRange): Promise<ProjectSummary[]> {
