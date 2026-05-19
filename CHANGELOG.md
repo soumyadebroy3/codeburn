@@ -1,114 +1,28 @@
 # Changelog
 
 ## Unreleased
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
 
-### Added (CLI)
-<<<<<<< HEAD
-<<<<<<< HEAD
-- **IBM Bob provider.** CodeBurn now discovers IBM Bob IDE task history from
-  `User/globalStorage/ibm.bob-code/tasks/<task-id>/` under both the GA
-  `IBM Bob` application data folder and preview-era `Bob-IDE` folder. The
-  provider reuses the Cline-family `ui_messages.json` parser for token/cost
-  records, reads `api_conversation_history.json` for model tags when present,
-  falls back to `ibm-bob-auto` pricing otherwise, and appears in CLI,
-  dashboard, JSON, docs, and the macOS provider tabs. Closes #248.
-=======
-=======
->>>>>>> c85beea (Fix Claude 1-hour cache write pricing (#317))
-- **IBM Bob provider.** Discovers IBM Bob IDE task history, reuses the
-  Cline-family parser for token/cost records, extracts model tags and
-  workspace-based project names from session data. Closes #248.
+### Added (CLI) — upstream sync v2.4 prep
+- **Crush provider.** Reads Charmbracelet Crush session data from `~/.local/share/crush/projects.json` and per-project `crush.db` SQLite databases. Adopts upstream PR #286 + brings in the per-provider icon column for README. Ports `assets/providers/` and `docs/providers/` conventions wholesale.
+- **Mistral Vibe provider.** Reads `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`. Uses `meta.json` for cumulative tokens, model pricing, timestamps; `messages.jsonl` for prompts and tool calls. Tracks subagent sessions under `agents/`. Adds 2 malformed-input regression tests. Ports upstream PR #301. Closes upstream #283.
+- **Kimi Code CLI provider.** Reads `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent `wire.jsonl`. K2 model alias mapping for hidden managed-account model IDs. Ports upstream PR #306.
+- **Codebuff provider.** Reads `~/.config/manicode/projects/<project>/chats/<chatId>/chat-messages.json`. Credits-based cost ($0.01/credit) with upstream-provider fallback when `RunState` records token-level usage. Tool name normalization to the canonical set. Ports upstream PR #124. Honors `CODEBUFF_DATA_DIR`.
+- **Cline provider.** Reads Cline task usage from VS Code globalStorage (`saoudrizwan.claude-dev`) and `~/.cline/data`. Reuses the `vscode-cline-parser` helper. Dedup by newest `ui_messages.json`. Ports upstream PR #312. Closes upstream #130.
+- **IBM Bob provider.** Discovers IBM Bob IDE task history under both GA (`IBM Bob`) and preview (`Bob-IDE`) application data folders. Reuses the Cline-family parser. Workspace-based project names. Ports upstream PR #316. Closes upstream #248.
+
+### Changed (CLI)
+- **Dynamic provider registry.** `src/providers/index.ts` lazy-load boilerplate replaced with a single `LAZY_PROVIDERS` table. Adding a new lazy provider is now a one-line change. Public contract (`getAllProviders` / `getProvider` / `discoverAllSessions`) unchanged.
+- **Node version guard.** Split `cli.ts` into a tiny launcher (Node-18 parseable) + `main.ts` (full CLI). On unsupported Node (< 22.13.0) prints a clear upgrade message instead of crashing with a cryptic `node:sqlite` / `string-width` error. `engines.node` bumped to `>=22.13.0`. Ports upstream PR #319.
 
 ### Fixed (CLI)
-- **Claude 1-hour cache write pricing.** 1-hour cache writes are now priced
-  at 2x base input (previously used the 5-minute 1.25x rate for all writes).
-  Daily cache bumped to v6 so stale totals are recomputed. Closes #276.
-<<<<<<< HEAD
-- **OpenCode MCP usage now counted.** OpenCode stores MCP tool calls as
-  `<server>_<tool>` names, which the shared MCP pipeline did not recognize.
-  The provider now normalizes these to the canonical `mcp__<server>__<tool>`
-  form so MCP breakdowns and `optimize` work correctly. Closes #308.
-- **Antigravity Windows language-server discovery.** Antigravity detection now
-  supports Windows process discovery, `--extension_server_port`,
-  `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped and
-  unwrapped Connect-RPC response shapes. Closes #249.
-- **Mangled project names in dashboard.** The By Project and Top Sessions
-  panels decoded slugs by splitting on `-`, which broke directory names
-  containing dashes or dots (e.g. `my-project` rendered as `my/project`).
-  Now uses the real project path instead. Closes #196.
-- **Cursor undated bubble rows misattributed to Today.** Bubble rows without
-  a `createdAt` timestamp were defaulting to the current date, inflating
-  Today's spend. Now skipped at both the SQL and application level.
->>>>>>> 929c66e (Fix Antigravity Windows discovery)
-=======
->>>>>>> c85beea (Fix Claude 1-hour cache write pricing (#317))
-
-## 0.9.8 - 2026-05-10
->>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))
-
-### Added (CLI)
-<<<<<<< HEAD
-- **Kimi Code CLI provider.** CodeBurn now reads Kimi session usage from
-  `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent
-  `wire.jsonl` files. The parser consumes Kimi's official `StatusUpdate`
-  token usage fields (`input_other`, `input_cache_read`,
-  `input_cache_creation`, `output`), normalizes Kimi tool names such as
-  `Shell`, `ReadFile`, and `WriteFile`, and maps hidden managed Kimi Code
-  model aliases to priced Kimi K2 entries.
-=======
-- **Cline provider support.** CodeBurn now reads Cline task usage from both
-  VS Code globalStorage (`saoudrizwan.claude-dev`) and Cline's
-  `~/.cline/data` task root. It reuses the existing Cline-family parser for
-  `ui_messages.json` usage entries, deduplicates migrated tasks by the newest
-  `ui_messages.json`, and exposes Cline in CLI provider filters, docs, and the
-  macOS menubar provider tabs. Closes #130.
-- **Multiple Claude config directories.** Set `CLAUDE_CONFIG_DIRS` to an
-  OS-delimited list of paths (`:`-separated on POSIX, `;`-separated on
-  Windows) to scan more than one Claude data directory in a single run.
-  Sessions across every configured directory roll up into one project row
-  per project, so a user with `~/.claude-work` and `~/.claude-personal`
-  who works on the same repo from both accounts sees one combined row
-  rather than two split rows. `~` is expanded; missing or unreadable
-  directories in the list are skipped instead of aborting the scan; if
-  every listed entry is unreadable a one-line hint is written to stderr
-  so a misplaced delimiter does not silently produce zero rows.
-  Precedence: `CLAUDE_CONFIG_DIRS` > `CLAUDE_CONFIG_DIR` > `~/.claude`.
-  As part of this change `~` and `~/foo` are now also expanded in
-  `CLAUDE_CONFIG_DIR` (previously the value was passed through verbatim,
-  which only worked when the shell expanded `~` before exporting).
-  Closes #208.
-- **`codeburn models` command.** Per-model breakdown across all providers,
-  one row per (provider, model), sorted by cost. Each row carries Input,
-  Output, Cache Write, Cache Read, Total, and Cost columns plus a Top Task
-  cell showing the dominant task category and its cost share (e.g.
-  `Coding (42%)`). Pass `--by-task` to explode each model into one row per
-  task type, with provider/model cells blanked on subsequent rows of the
-  same group and a horizontal divider between groups. Filters: `--period`
-  (default `30days`), `--from/--to`, `--provider`, `--task`, `--top`,
-  `--min-cost`, `--no-totals`. Output formats: `table` (Unicode box-drawn,
-  default), `markdown` (GitHub-flavored, copy-paste friendly), `json`,
-  `csv`. The table renderer auto-sizes every column to its content and
-  drops cache columns first, then input/output, then top-task when the
-  terminal is too narrow to fit the full set. Headers are cyan, totals row
-  is yellow, provider name is dim. Inspired by tokscale's per-model table
-  and ccusage's responsive cli-table3 layout, ported to plain Node with
-  no new runtime dependency.
-- **Per-day one-shot data in `--format json`.** Each entry of `daily[]` now
-  carries `turns`, `editTurns`, `oneShotTurns`, and `oneShotRate` (0-100,
-  one decimal, `null` when no edit turns). Counts match the existing
-  period-level `activities[]` rollup so a consumer can sum across days and
-  reconcile. Closes #279.
->>>>>>> 9187bc5 (Add Cline provider)
-
-## 0.9.8 - 2026-05-10
->>>>>>> 78cbfd3 (Add Kimi provider)
-
-### Added (CLI)
-- **Mistral Vibe provider.** CodeBurn now reads Mistral Vibe session folders from `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`, using `meta.json` for cumulative prompt/completion tokens, model pricing, and timestamps, and `messages.jsonl` for user prompts and tool calls. Subagent sessions under a parent session's `agents/` folder are tracked separately. Ports upstream PR #301. Closes upstream #283.
+- **Cursor undated bubble rows misattributed to Today.** Bubble rows without `createdAt` were defaulting to the current date and inflating today's spend. Now skipped. Ports upstream PR #321.
+- **Mangled project names in dashboard.** Slug decoding broke directory names with dashes or dots. Now uses the real project path. Ports upstream PR #320. Closes upstream #196.
+- **Antigravity Windows language-server discovery.** Adds Windows process discovery via system32 PowerShell, plus `--extension_server_port`, `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped + unwrapped Connect-RPC response shapes. Preserves fork's `LoopbackOnlyAgent` + absolute `/bin/ps` security hardening. Ports upstream PR #324. Closes upstream #249.
+- **Claude 1-hour cache write pricing.** 1-hour cache writes now priced at 2× base input (was 1.25× for all writes). `calculateCost` param 4 is now the TOTAL cache creation tokens (incl. 1h); param 8 is the 1h portion. Daily-cache version bumped 4 → 6; pre-v6 caches are discarded and recomputed cleanly. Ports upstream PR #317. Closes upstream #276.
+- **Eager daily-cache hydration removed from commands that never read it.** `status --format json` and the regular `status` paths no longer parse the 365-day backfill before parsing the period they actually report on. Only `status --format menubar-json` (the lone consumer of `getDaysInRange`) keeps the cache hydration call.
+- **Buffer-based session-line reader.** `readSessionLines` now scans raw Bytes with `Buffer.indexOf(0x0a)` instead of `createInterface` + utf-8 stream. Eliminates the ConsString-tree OOM peak when a single JSONL line is large (100 MB+). Preserves fork's 2 GB stream cap and the verbose-mode warn-on-failure contract. Drops upstream's optional `shouldSkipHead` / `byteOffsetTracker` parameters.
+- **JournalEntry compaction.** Strip heavy fields (text, thinking, tool_result blocks) right after `JSON.parse` in the JSONL hot loop. User text capped at 2000 chars total; bash commands capped at 2000 chars; max 500 tool_use blocks; max 1000 deferred-tool added names per attachment. Preserves cache_creation 1h/5m breakdown for #317 pricing accuracy. Ports upstream PR #335.
+- **Session cache cleared between period parses.** `status --format json` parses today and month sequentially with an explicit `clearSessionCache()` between them so both `ProjectSummary` result sets are not pinned in RAM at once.
 
 ## 2.3.0 - 2026-05-09
 

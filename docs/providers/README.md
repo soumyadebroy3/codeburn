@@ -18,12 +18,9 @@ For the architectural picture, see `../architecture.md`.
 | [Gemini](gemini.md) | JSON / JSONL | `src/providers/gemini.ts` | none |
 | [IBM Bob](ibm-bob.md) | JSON | `src/providers/ibm-bob.ts` | `tests/providers/ibm-bob.test.ts` |
 | [KiloCode](kilo-code.md) | JSON | `src/providers/kilo-code.ts` | `tests/providers/kilo-code.test.ts` |
-| [Kiro](kiro.md) | JSON | `src/providers/kiro.ts` | `tests/providers/kiro.test.ts` |
-<<<<<<< HEAD
-| [Mistral Vibe](mistral-vibe.md) | JSON / JSONL | `src/providers/mistral-vibe.ts` | `tests/providers/mistral-vibe.test.ts` |
-=======
 | [Kimi](kimi.md) | JSONL | `src/providers/kimi.ts` | `tests/providers/kimi.test.ts` |
->>>>>>> 78cbfd3 (Add Kimi provider)
+| [Kiro](kiro.md) | JSON | `src/providers/kiro.ts` | `tests/providers/kiro.test.ts` |
+| [Mistral Vibe](mistral-vibe.md) | JSON / JSONL | `src/providers/mistral-vibe.ts` | `tests/providers/mistral-vibe.test.ts` |
 | [OpenClaw](openclaw.md) | JSONL | `src/providers/openclaw.ts` | `tests/providers/openclaw.test.ts` |
 | [Pi](pi.md) | JSONL | `src/providers/pi.ts` | `tests/providers/pi.test.ts` |
 | [OMP](omp.md) | JSONL | `src/providers/pi.ts` | `tests/providers/omp.test.ts` |
@@ -45,11 +42,7 @@ For the architectural picture, see `../architecture.md`.
 
 | Helper | Used by | Source |
 |---|---|---|
-<<<<<<< HEAD
-| [vscode-cline-parser](vscode-cline-parser.md) | `cline`, `kilo-code`, `roo-code` | `src/providers/vscode-cline-parser.ts` |
-=======
-| [vscode-cline-parser](vscode-cline-parser.md) | `ibm-bob`, `kilo-code`, `roo-code` | `src/providers/vscode-cline-parser.ts` |
->>>>>>> 03e22ec (Add IBM Bob provider with workspace extraction (#316))
+| [vscode-cline-parser](vscode-cline-parser.md) | `cline`, `ibm-bob`, `kilo-code`, `roo-code` | `src/providers/vscode-cline-parser.ts` |
 
 ## File Format
 
