@@ -39,6 +39,117 @@ function parseJsonlLine(line: string): JournalEntry | null {
   }
 }
 
+/// Compact a freshly-parsed JournalEntry down to only the fields downstream
+/// consumers actually read for cost aggregation. Dropping `text`, `thinking`,
+/// and `tool_result` blocks (which can be megabytes each in large sessions)
+/// is the single biggest memory win on the JSONL hot loop. Ports upstream
+/// PR #335.
+///
+/// Caps are defense-in-depth against hostile session files: a malicious or
+/// corrupt JSONL line can't blow heap by stuffing a single field with
+/// gigabytes of text — we slice at fixed limits before further processing.
+const USER_TEXT_CAP = 2000
+const BASH_COMMAND_CAP = 2000
+const MAX_TOOL_BLOCKS = 500
+const MAX_ADDED_NAMES = 1000
+
+export function compactEntry(raw: JournalEntry): JournalEntry {
+  const entry: JournalEntry = { type: raw.type }
+
+  if (raw.timestamp !== undefined) entry.timestamp = raw.timestamp
+  if (raw.sessionId !== undefined) entry.sessionId = raw.sessionId
+  if (raw.cwd !== undefined) entry.cwd = raw.cwd
+
+  const att = (raw as Record<string, unknown>)['attachment']
+  if (att && typeof att === 'object') {
+    const a = att as Record<string, unknown>
+    if (a['type'] === 'deferred_tools_delta' && Array.isArray(a['addedNames'])) {
+      const names: string[] = []
+      for (let i = 0; i < Math.min(a['addedNames'].length, MAX_ADDED_NAMES); i++) {
+        const n = a['addedNames'][i]
+        if (typeof n === 'string') names.push(n)
+      }
+      ;(entry as Record<string, unknown>)['attachment'] = { type: 'deferred_tools_delta', addedNames: names }
+    }
+  }
+
+  if (!raw.message) return entry
+
+  if (raw.message.role === 'user') {
+    const content = raw.message.content
+    if (typeof content === 'string') {
+      entry.message = { role: 'user', content: content.slice(0, USER_TEXT_CAP) }
+    } else if (Array.isArray(content)) {
+      let remaining = USER_TEXT_CAP
+      const blocks: { type: 'text'; text: string }[] = []
+      for (const b of content) {
+        if (remaining <= 0) break
+        if (!b || typeof b !== 'object' || b.type !== 'text') continue
+        const text = (b as { text?: unknown }).text
+        if (typeof text !== 'string') continue
+        const sliced = text.slice(0, remaining)
+        blocks.push({ type: 'text', text: sliced })
+        remaining -= sliced.length
+      }
+      entry.message = { role: 'user', content: blocks }
+    }
+    return entry
+  }
+
+  const msg = raw.message as AssistantMessageContent
+  if (!msg.usage || !msg.model) return entry
+
+  const rawContent = msg.content
+  const contentArr = Array.isArray(rawContent) ? rawContent : []
+  const toolBlocks = contentArr.filter((b): b is ToolUseBlock => b != null && typeof b === 'object' && b.type === 'tool_use')
+  const compactContent: ContentBlock[] = toolBlocks.slice(0, MAX_TOOL_BLOCKS).map(tb => {
+    const input: Record<string, unknown> = {}
+    if (tb.name === 'Skill') {
+      const ri = (tb.input ?? {}) as Record<string, unknown>
+      if (typeof ri['skill'] === 'string') input['skill'] = (ri['skill'] as string).slice(0, 200)
+      if (typeof ri['name'] === 'string') input['name'] = (ri['name'] as string).slice(0, 200)
+    } else if (BASH_TOOLS.has(tb.name)) {
+      const ri = (tb.input ?? {}) as Record<string, unknown>
+      if (typeof ri['command'] === 'string') {
+        input['command'] = (ri['command'] as string).slice(0, BASH_COMMAND_CAP)
+      }
+    }
+    return { type: 'tool_use' as const, id: tb.id ?? '', name: tb.name, input }
+  })
+
+  const u = msg.usage
+  const compactUsage: AssistantMessageContent['usage'] = {
+    input_tokens: u.input_tokens,
+    output_tokens: u.output_tokens,
+  }
+  if (u.cache_creation_input_tokens) compactUsage.cache_creation_input_tokens = u.cache_creation_input_tokens
+  if (u.cache_creation) {
+    compactUsage.cache_creation = {
+      ...(u.cache_creation.ephemeral_5m_input_tokens ? { ephemeral_5m_input_tokens: u.cache_creation.ephemeral_5m_input_tokens } : {}),
+      ...(u.cache_creation.ephemeral_1h_input_tokens ? { ephemeral_1h_input_tokens: u.cache_creation.ephemeral_1h_input_tokens } : {}),
+    }
+  }
+  if (u.cache_read_input_tokens) compactUsage.cache_read_input_tokens = u.cache_read_input_tokens
+  if (u.server_tool_use) {
+    compactUsage.server_tool_use = {
+      ...(u.server_tool_use.web_search_requests ? { web_search_requests: u.server_tool_use.web_search_requests } : {}),
+      ...(u.server_tool_use.web_fetch_requests ? { web_fetch_requests: u.server_tool_use.web_fetch_requests } : {}),
+    }
+  }
+  if (u.speed) compactUsage.speed = u.speed
+
+  entry.message = {
+    type: 'message',
+    role: 'assistant',
+    model: msg.model,
+    usage: compactUsage,
+    content: compactContent,
+    ...(msg.id ? { id: msg.id } : {}),
+  }
+
+  return entry
+}
+
 function extractToolNames(content: ContentBlock[]): string[] {
   return content
     .filter((b): b is ToolUseBlock => b.type === 'tool_use')
@@ -437,7 +548,10 @@ async function parseSessionFile(
   for await (const line of readSessionLines(filePath)) {
     hasLines = true
     const entry = parseJsonlLine(line)
-    if (entry) entries.push(entry)
+    // compactEntry drops heavy fields (text/thinking/tool_result blocks)
+    // right after parse so the entries array doesn't pin them for the rest
+    // of the session-level aggregation pass. Mitigates OOM on huge JSONLs.
+    if (entry) entries.push(compactEntry(entry))
   }
 
   if (!hasLines) return null
