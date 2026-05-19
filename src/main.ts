@@ -4,7 +4,7 @@ import { installMenubarApp } from './menubar-installer.js'
 import { installTrayApp } from './tray-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { loadPricing, setModelAliases } from './models.js'
-import { parseAllSessions, filterProjectsByName } from './parser.js'
+import { parseAllSessions, filterProjectsByName, clearSessionCache } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { type PeriodData, type ProviderCost } from './menubar-json.js'
@@ -682,8 +682,14 @@ program
     }
 
     if (opts.format === 'json') {
+      // Parse today and month sequentially, clearing the in-memory session
+      // cache between them so we don't pin both result sets in RAM at once.
+      // Mitigates OOM on accounts with very large month-range session data.
+      // Upstream PR #335.
       const todayData = buildPeriodData('today', fp(await parseAllSessions(getDateRange('today').range, pf)))
+      clearSessionCache()
       const monthData = buildPeriodData('month', fp(await parseAllSessions(getDateRange('month').range, pf)))
+      clearSessionCache()
       const { code, rate } = getCurrency()
       const payload: {
         currency: string
@@ -704,6 +710,7 @@ program
     }
 
     const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
+    clearSessionCache()
     // Read the plan so the status line can switch to "Month value" + leverage
     // verdict when the user is on a flat subscription instead of pay-as-you-go.
     const planRecord = await readPlan().catch(() => undefined)

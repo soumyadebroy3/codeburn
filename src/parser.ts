@@ -803,6 +803,14 @@ function cachePut(key: string, data: ProjectSummary[]) {
   sessionCache.set(key, { data, ts: now })
 }
 
+/// Drop every entry in the in-memory parseAllSessions result cache. Used
+/// by the multi-period status code paths to avoid pinning both today and
+/// month result sets in RAM at the same time (OOM mitigation, upstream
+/// PR #335). Safe to call any time — the cache is purely a perf optimization.
+export function clearSessionCache(): void {
+  sessionCache.clear()
+}
+
 export function filterProjectsByName(
   projects: ProjectSummary[],
   include?: string[],
