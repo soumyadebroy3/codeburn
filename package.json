@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "bundle-litellm": "node scripts/bundle-litellm.mjs",
-    "build": "node scripts/bundle-litellm.mjs && tsup",
+    "build": "node scripts/bundle-litellm.mjs && tsup && node -e \"require('fs').copyFileSync('src/cli.ts','dist/cli.js'); require('fs').chmodSync('dist/cli.js', 0o755)\"",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
     "prepublishOnly": "npm run build",
@@ -34,7 +34,7 @@
     "developer-tools"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "author": "AgentSeal <hello@agentseal.org>",
   "license": "MIT",
