@@ -13,6 +13,7 @@ import type {
 } from './types.js'
 
 type MessageRow = {
+  session_id: string
   id: string
   time_created: number
   data: Uint8Array | string
@@ -197,13 +198,41 @@ function createParser(
           return
         }
 
+        // Walk the parent_id chain so child sessions (spawned by sub-task
+        // tools) get rolled up under their root session. WITH RECURSIVE
+        // CTE expands the root session id to itself + every non-archived
+        // descendant. `time_archived IS NULL` skips OpenCode's soft-deleted
+        // session entries so we don't re-count messages from a session the
+        // user explicitly archived. Upstream PR #343.
         const messages = db.query<MessageRow>(
-          'SELECT id, time_created, CAST(data AS BLOB) AS data FROM message WHERE session_id = ? ORDER BY time_created ASC',
+          `WITH RECURSIVE session_tree(id) AS (
+            SELECT id FROM session WHERE id = ?
+            UNION
+            SELECT child.id
+            FROM session child
+            JOIN session_tree parent ON child.parent_id = parent.id
+            WHERE child.time_archived IS NULL
+          )
+          SELECT session_id, id, time_created, CAST(data AS BLOB) AS data
+          FROM message
+          WHERE session_id IN (SELECT id FROM session_tree)
+          ORDER BY time_created ASC, id ASC`,
           [sessionId],
         )
 
         const parts = db.query<PartRow>(
-          'SELECT message_id, CAST(data AS BLOB) AS data FROM part WHERE session_id = ? ORDER BY message_id, id',
+          `WITH RECURSIVE session_tree(id) AS (
+            SELECT id FROM session WHERE id = ?
+            UNION
+            SELECT child.id
+            FROM session child
+            JOIN session_tree parent ON child.parent_id = parent.id
+            WHERE child.time_archived IS NULL
+          )
+          SELECT message_id, CAST(data AS BLOB) AS data
+          FROM part
+          WHERE session_id IN (SELECT id FROM session_tree)
+          ORDER BY message_id, id`,
           [sessionId],
         )
 
@@ -219,7 +248,11 @@ function createParser(
           }
         }
 
-        let currentUserMessage = ''
+        // Keyed by session_id because each child session in the tree
+        // has its own user-message timeline; using a single shared
+        // `currentUserMessage` would leak across siblings and attribute
+        // the wrong prompt to an assistant turn.
+        const currentUserMessageBySession = new Map<string, string>()
 
         for (const msg of messages) {
           let data: MessageData
@@ -235,7 +268,7 @@ function createParser(
               .map((p) => p.text ?? '')
               .filter(Boolean)
             if (textParts.length > 0) {
-              currentUserMessage = textParts.join(' ')
+              currentUserMessageBySession.set(msg.session_id, textParts.join(' '))
             }
             continue
           }
@@ -276,7 +309,10 @@ function createParser(
             .filter((p) => p.tool === 'bash' && typeof p.state?.input?.command === 'string')
             .flatMap((p) => extractBashCommands(p.state!.input!.command!))
 
-          const dedupKey = `opencode:${sessionId}:${msg.id}`
+          // Dedup by child-session id, not root, so two distinct child
+          // sessions that happen to mint the same internal message id
+          // don't collide.
+          const dedupKey = `opencode:${msg.session_id}:${msg.id}`
           if (seenKeys.has(dedupKey)) continue
           seenKeys.add(dedupKey)
 
@@ -310,7 +346,7 @@ function createParser(
             timestamp: parseTimestamp(msg.time_created),
             speed: 'standard',
             deduplicationKey: dedupKey,
-            userMessage: currentUserMessage,
+            userMessage: currentUserMessageBySession.get(msg.session_id) ?? '',
             sessionId,
           }
         }
