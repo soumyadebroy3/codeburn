@@ -543,6 +543,8 @@ program
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
       const isAllProviders = pf === 'all'
+      // Hoisted so the per-provider fast path below can also reuse it.
+      const todayRange: DateRange = { start: todayStart, end: new Date() }
 
       const cache = await hydrateCache()
 
@@ -555,7 +557,6 @@ program
 
       if (isAllProviders) {
         // Parse only today's sessions; historical data comes from cache to avoid double-counting
-        const todayRange: DateRange = { start: todayStart, end: new Date() }
         const todayProjects = fp(await parseAllSessions(todayRange, 'all'))
         const todayDays = aggregateProjectsIntoDays(todayProjects)
         const rangeStartStr = toDateString(periodInfo.range.start)
@@ -567,10 +568,33 @@ program
         scanProjects = todayProjects
         scanRange = periodInfo.range
       } else {
-        const projects = fp(await parseAllSessions(periodInfo.range, pf))
-        currentData = buildPeriodData(periodInfo.label, projects)
-        scanProjects = projects
-        scanRange = periodInfo.range
+        // Per-provider fast path: parse only today's sessions with the
+        // provider filter (small, fast), then add the historical
+        // cost+calls for that provider straight from the daily cache.
+        // Avoids the 22 s re-parse of full session history that the old
+        // path triggered every time the user clicked a per-provider tab
+        // in the menubar. Ports upstream commit b0131f6.
+        const todayProviderProjects = fp(await parseAllSessions(todayRange, pf))
+        const todayData = buildPeriodData(periodInfo.label, todayProviderProjects)
+        const todayDays = aggregateProjectsIntoDays(todayProviderProjects)
+        const rangeStartStr = toDateString(periodInfo.range.start)
+        const rangeEndStr = toDateString(periodInfo.range.end)
+        const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
+        let histCost = 0, histCalls = 0
+        for (const d of historicalDays) {
+          const prov = d.providers[pf]
+          if (prov) { histCost += prov.cost; histCalls += prov.calls }
+        }
+        currentData = {
+          ...todayData,
+          cost: todayData.cost + histCost,
+          calls: todayData.calls + histCalls,
+        }
+        // Avoid an unused-var warning while keeping todayDays in scope for
+        // later panels that want today-only project breakdowns.
+        void todayDays
+        scanProjects = todayProviderProjects
+        scanRange = todayRange
       }
 
       // PROVIDERS
