@@ -701,6 +701,10 @@ function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
     timestamp: call.timestamp,
     bashCommands: call.bashCommands,
     deduplicationKey: call.deduplicationKey,
+    // Carry the optional per-call step sequence through to the classifier
+    // so providers that aggregate (e.g. Mistral Vibe's session-level call)
+    // still expose retry shape to one-shot detection. Upstream PR #355.
+    toolSequence: call.toolSequence,
   }
 
   return {
@@ -735,6 +739,31 @@ async function parseProviderSources(
         seenKeys,
       )
 
+      // Group adjacent provider calls that share a turnId into one
+      // ParsedTurn so the classifier can see retry shape across an
+      // agent-call chain. Calls without turnId stay one-per-turn. Upstream
+      // PR #355. We flush whenever turnId changes (or is missing) and
+      // again at end of stream.
+      let pendingTurn: ParsedTurn | null = null
+      let pendingProject: string | null = null
+      let pendingProjectPath: string | undefined
+
+      const flushPending = () => {
+        if (!pendingTurn || !pendingProject) return
+        const classified = classifyTurn(pendingTurn)
+        const key = `${providerName}:${pendingTurn.sessionId}:${pendingProject}`
+        const existing = sessionMap.get(key)
+        if (existing) {
+          existing.turns.push(classified)
+          if (!existing.projectPath && pendingProjectPath) existing.projectPath = pendingProjectPath
+        } else {
+          sessionMap.set(key, { project: pendingProject, projectPath: pendingProjectPath, turns: [classified] })
+        }
+        pendingTurn = null
+        pendingProject = null
+        pendingProjectPath = undefined
+      }
+
       for await (const call of parser.parse()) {
         if (dateRange) {
           if (!call.timestamp) continue
@@ -742,19 +771,34 @@ async function parseProviderSources(
           if (ts < dateRange.start || ts > dateRange.end) continue
         }
 
-        const turn = providerCallToTurn(call)
-        const classified = classifyTurn(turn)
         const project = call.project ?? source.project
-        const key = `${providerName}:${call.sessionId}:${project}`
+        const newTurn = providerCallToTurn(call)
 
-        const existing = sessionMap.get(key)
-        if (existing) {
-          existing.turns.push(classified)
-          if (!existing.projectPath && call.projectPath) existing.projectPath = call.projectPath
+        // Same turnId as the in-flight aggregate → append.
+        if (
+          call.turnId &&
+          pendingTurn &&
+          pendingProject === project &&
+          pendingTurn.sessionId === call.sessionId &&
+          // Re-derive the prior turnId from the first call's first assistantCall;
+          // we stash it as a synthetic field on the apiCall via deduplicationKey
+          // prefix already, but the simplest reliable check is to track it next
+          // to the pending turn.
+          (pendingTurn as ParsedTurn & { _turnId?: string })._turnId === call.turnId
+        ) {
+          pendingTurn.assistantCalls.push(...newTurn.assistantCalls)
         } else {
-          sessionMap.set(key, { project, projectPath: call.projectPath, turns: [classified] })
+          flushPending()
+          pendingTurn = newTurn
+          pendingProject = project
+          pendingProjectPath = call.projectPath
+          if (call.turnId) {
+            (pendingTurn as ParsedTurn & { _turnId?: string })._turnId = call.turnId
+          }
         }
       }
+
+      flushPending()
     }
   } finally {
     if (providerName === 'codex') await flushCodexCache()

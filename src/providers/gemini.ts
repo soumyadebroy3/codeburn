@@ -78,6 +78,12 @@ function parseSession(data: GeminiSession, seenKeys: Set<string>): ParsedProvide
 
   let lastUserMessage = ''
   let geminiOrdinal = 0
+  // turnId groups consecutive assistant messages that share the same user
+  // prompt so the classifier sees the agent-call chain as a single retried
+  // turn, not three independent one-shots. Bumped when a new user message
+  // arrives. Upstream PR #355.
+  let turnOrdinal = 0
+  let currentTurnId = `${data.sessionId}:turn-0`
 
   for (const msg of data.messages) {
     if (msg.type === 'user') {
@@ -86,6 +92,8 @@ function parseSession(data: GeminiSession, seenKeys: Set<string>): ParsedProvide
       } else if (typeof msg.content === 'string') {
         lastUserMessage = msg.content.slice(0, 500)
       }
+      turnOrdinal++
+      currentTurnId = `${data.sessionId}:turn-${turnOrdinal}`
       continue
     }
 
@@ -149,6 +157,7 @@ function parseSession(data: GeminiSession, seenKeys: Set<string>): ParsedProvide
       timestamp: tsDate.toISOString(),
       speed: 'standard',
       deduplicationKey: dedupKey,
+      turnId: currentTurnId,
       userMessage: lastUserMessage,
       sessionId: data.sessionId,
     })

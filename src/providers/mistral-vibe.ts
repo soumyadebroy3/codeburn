@@ -216,18 +216,26 @@ function parseToolArguments(raw: string | Record<string, unknown> | null | undef
   }
 }
 
-function extractTools(messages: VibeMessage[]): { tools: string[]; bashCommands: string[] } {
+function extractTools(messages: VibeMessage[]): { tools: string[]; bashCommands: string[]; toolSequence: string[][] } {
   const tools: string[] = []
   const bashCommands: string[] = []
+  // toolSequence preserves per-assistant-message ordering so the one-shot
+  // classifier can spot Edit → Bash → Edit retry chains inside a Vibe
+  // session that codeburn otherwise reports as one aggregated call.
+  // Upstream PR #355. Each entry is the tool list from one assistant
+  // message; empty messages are skipped.
+  const toolSequence: string[][] = []
 
   for (const message of messages) {
     if (message.role !== 'assistant') continue
+    const stepTools: string[] = []
     for (const toolCall of message.tool_calls ?? []) {
       const rawName = toolCall.function?.name
       if (!rawName) continue
 
       const mappedName = toolNameMap[rawName] ?? rawName
       tools.push(mappedName)
+      stepTools.push(mappedName)
 
       if (mappedName !== 'Bash') continue
       const args = parseToolArguments(toolCall.function?.arguments)
@@ -236,11 +244,13 @@ function extractTools(messages: VibeMessage[]): { tools: string[]; bashCommands:
         bashCommands.push(...extractBashCommands(command))
       }
     }
+    if (stepTools.length > 0) toolSequence.push(stepTools)
   }
 
   return {
     tools: [...new Set(tools)],
     bashCommands: [...new Set(bashCommands)],
+    toolSequence,
   }
 }
 
@@ -287,7 +297,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
 
       const messages = await readMessages(messagesPath)
       const model = resolveModel(metadata)
-      const { tools, bashCommands } = extractTools(messages)
+      const { tools, bashCommands, toolSequence } = extractTools(messages)
       const costUSD = calculateSessionCost(metadata, model, inputTokens, outputTokens)
 
       yield {
@@ -306,6 +316,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         timestamp: metadata.end_time ?? metadata.start_time ?? '',
         speed: 'standard',
         deduplicationKey,
+        toolSequence: toolSequence.length > 0 ? toolSequence : undefined,
         userMessage: firstUserMessage(messages, metadata.title),
         sessionId,
       }

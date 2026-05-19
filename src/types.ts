@@ -108,6 +108,11 @@ export type ParsedApiCall = {
   timestamp: string
   bashCommands: string[]
   deduplicationKey: string
+  /// Optional per-call ordered tool sub-steps. Populated when a single
+  /// ParsedApiCall actually aggregates several internal assistant messages
+  /// — feeds the one-shot classifier so it can spot Edit→Bash→Edit retry
+  /// shape even inside aggregated calls.
+  toolSequence?: string[][]
 }
 
 export type TaskCategory =

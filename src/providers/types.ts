@@ -30,6 +30,16 @@ export type ParsedProviderCall = {
   timestamp: string
   speed: 'standard' | 'fast'
   deduplicationKey: string
+  /// Optional grouping key — when multiple ParsedProviderCalls share the same
+  /// turnId the parser treats them as a single user-initiated turn (an
+  /// agent-call chain) so the one-shot classifier sees Edit→Bash→Edit as a
+  /// single retried turn, not three independent first-tries.
+  turnId?: string
+  /// Optional per-call ordered tool sub-steps. Providers that aggregate
+  /// multiple internal assistant messages into one ParsedProviderCall fill
+  /// this in so the classifier can see retry shape inside the aggregate.
+  /// `tools` is still the flat union for display.
+  toolSequence?: string[][]
   userMessage: string
   sessionId: string
   project?: string
