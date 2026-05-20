@@ -1,28 +1,54 @@
 # Changelog
 
-## Unreleased
+## 2.4.0 - 2026-05-20
 
-### Added (CLI) — upstream sync v2.4 prep
-- **Crush provider.** Reads Charmbracelet Crush session data from `~/.local/share/crush/projects.json` and per-project `crush.db` SQLite databases. Adopts upstream PR #286 + brings in the per-provider icon column for README. Ports `assets/providers/` and `docs/providers/` conventions wholesale.
+Twenty-six-commit upstream sync against `getagentseal/codeburn`. Brings six
+new CLI providers, an OOM-hardened parser, fixes for the Claude 1-hour
+cache write pricing bug, a Node version guard that prints a clear upgrade
+message on unsupported runtimes, and the macOS menubar's deferred keychain
+prompt. Adopts the upstream `assets/providers/` icon convention and the
+`docs/providers/` per-provider docs convention.
+
+### Added (CLI)
+- **Crush provider.** Reads Charmbracelet Crush session data from `~/.local/share/crush/projects.json` and per-project `crush.db` SQLite databases. Ports upstream PR #286 and the per-provider icon column for README.
 - **Mistral Vibe provider.** Reads `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`. Uses `meta.json` for cumulative tokens, model pricing, timestamps; `messages.jsonl` for prompts and tool calls. Tracks subagent sessions under `agents/`. Adds 2 malformed-input regression tests. Ports upstream PR #301. Closes upstream #283.
 - **Kimi Code CLI provider.** Reads `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent `wire.jsonl`. K2 model alias mapping for hidden managed-account model IDs. Ports upstream PR #306.
 - **Codebuff provider.** Reads `~/.config/manicode/projects/<project>/chats/<chatId>/chat-messages.json`. Credits-based cost ($0.01/credit) with upstream-provider fallback when `RunState` records token-level usage. Tool name normalization to the canonical set. Ports upstream PR #124. Honors `CODEBUFF_DATA_DIR`.
 - **Cline provider.** Reads Cline task usage from VS Code globalStorage (`saoudrizwan.claude-dev`) and `~/.cline/data`. Reuses the `vscode-cline-parser` helper. Dedup by newest `ui_messages.json`. Ports upstream PR #312. Closes upstream #130.
 - **IBM Bob provider.** Discovers IBM Bob IDE task history under both GA (`IBM Bob`) and preview (`Bob-IDE`) application data folders. Reuses the Cline-family parser. Workspace-based project names. Ports upstream PR #316. Closes upstream #248.
+- **`codeburn plan reset --provider <name>`.** Clears one provider's plan without affecting others. Existing `plan reset` (no provider) still clears every stored plan. Ports the user-facing behaviour of upstream PR #300.
 
 ### Changed (CLI)
 - **Dynamic provider registry.** `src/providers/index.ts` lazy-load boilerplate replaced with a single `LAZY_PROVIDERS` table. Adding a new lazy provider is now a one-line change. Public contract (`getAllProviders` / `getProvider` / `discoverAllSessions`) unchanged.
 - **Node version guard.** Split `cli.ts` into a tiny launcher (Node-18 parseable) + `main.ts` (full CLI). On unsupported Node (< 22.13.0) prints a clear upgrade message instead of crashing with a cryptic `node:sqlite` / `string-width` error. `engines.node` bumped to `>=22.13.0`. Ports upstream PR #319.
+- **One-shot rate now works for non-Claude providers.** `ParsedProviderCall` gains optional `turnId` (groups consecutive provider calls into one classifier turn) and `toolSequence` (preserves per-step ordering inside an aggregated call). Gemini fills `turnId` per user message; Mistral Vibe fills `toolSequence` per assistant message. `classifier.ts` prefers `toolSequence` when present and falls back to the per-call tool union. Ports upstream PR #355.
+- **OpenCode child sessions roll up under root.** Parser now walks the `parent_id` chain via a SQLite `WITH RECURSIVE` CTE so sub-task sessions get attributed to their root session. Skips soft-deleted entries via `time_archived IS NULL`. Ports upstream PR #343.
+- **Per-provider menubar fast path.** Clicking a per-provider tab in the menubar (Codex/Claude/etc.) no longer re-parses session history from scratch (~22s on heavy accounts). Parses only today live, pulls historical cost+calls for that provider from the daily cache. Matches the All-tab pattern. Ports the perf half of upstream commit b0131f6.
+- **Subagent JSONL files discovered in top-level `subagents/` subdir.** `collectJsonlFiles` now also scans `<dir>/subagents/*.jsonl` directly, not only `<dir>/<entry>/subagents/`. Some providers (Kimi for its agent-call sessions) use the top-level layout. Result deduped through a Set.
 
 ### Fixed (CLI)
 - **Cursor undated bubble rows misattributed to Today.** Bubble rows without `createdAt` were defaulting to the current date and inflating today's spend. Now skipped. Ports upstream PR #321.
 - **Mangled project names in dashboard.** Slug decoding broke directory names with dashes or dots. Now uses the real project path. Ports upstream PR #320. Closes upstream #196.
 - **Antigravity Windows language-server discovery.** Adds Windows process discovery via system32 PowerShell, plus `--extension_server_port`, `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped + unwrapped Connect-RPC response shapes. Preserves fork's `LoopbackOnlyAgent` + absolute `/bin/ps` security hardening. Ports upstream PR #324. Closes upstream #249.
 - **Claude 1-hour cache write pricing.** 1-hour cache writes now priced at 2× base input (was 1.25× for all writes). `calculateCost` param 4 is now the TOTAL cache creation tokens (incl. 1h); param 8 is the 1h portion. Daily-cache version bumped 4 → 6; pre-v6 caches are discarded and recomputed cleanly. Ports upstream PR #317. Closes upstream #276.
+- **OpenCode MCP usage now counted.** OpenCode stores MCP tool calls as `<server>_<tool>`. New `normalizeToolName` helper converts these to the canonical `mcp__<server>__<tool>` form so MCP breakdowns and `optimize` see them. Built-in tool names are checked first. Ports upstream PR #318. Closes upstream #308.
+- **OpenCode router calls without usage are kept.** Router-mode messages (e.g. `/model switch`) emit zero token usage but produce tool calls or text. Previously dropped by the all-zero filter; now kept when there's visible activity. Ports upstream PR #342.
 - **Eager daily-cache hydration removed from commands that never read it.** `status --format json` and the regular `status` paths no longer parse the 365-day backfill before parsing the period they actually report on. Only `status --format menubar-json` (the lone consumer of `getDaysInRange`) keeps the cache hydration call.
-- **Buffer-based session-line reader.** `readSessionLines` now scans raw Bytes with `Buffer.indexOf(0x0a)` instead of `createInterface` + utf-8 stream. Eliminates the ConsString-tree OOM peak when a single JSONL line is large (100 MB+). Preserves fork's 2 GB stream cap and the verbose-mode warn-on-failure contract. Drops upstream's optional `shouldSkipHead` / `byteOffsetTracker` parameters.
+- **Buffer-based session-line reader.** `readSessionLines` now scans raw Bytes with `Buffer.indexOf(0x0a)` instead of `createInterface` + utf-8 stream. Eliminates the ConsString-tree OOM peak when a single JSONL line is large (100 MB+). Preserves fork's 2 GB stream cap and the verbose-mode warn-on-failure contract.
 - **JournalEntry compaction.** Strip heavy fields (text, thinking, tool_result blocks) right after `JSON.parse` in the JSONL hot loop. User text capped at 2000 chars total; bash commands capped at 2000 chars; max 500 tool_use blocks; max 1000 deferred-tool added names per attachment. Preserves cache_creation 1h/5m breakdown for #317 pricing accuracy. Ports upstream PR #335.
 - **Session cache cleared between period parses.** `status --format json` parses today and month sequentially with an explicit `clearSessionCache()` between them so both `ProjectSummary` result sets are not pinned in RAM at once.
+
+### Changed (macOS menubar)
+- **Deferred keychain prompt.** New `dormant` load state suppresses keychain reads on launch when previously bootstrapped — no prompt fires until the user clicks Connect on the plan tab. Ad-hoc-signed builds used to re-prompt on every relaunch because keychain ACLs invalidate on rebuild. Ports upstream PR #338.
+- **Provider strip mouse-wheel scrollable.** `AgentTabStrip` now consumes horizontal scroll wheel events and wraps the tab list in a scrollable container. Trackpad events pass through. Ports upstream PR #334.
+- **MenubarPayload extended for Optimize-tab analytics.** Adds `RetryTax`, `RoutingWaste`, `ProjectEntry`, `ModelEfficiencyEntry`, `TopSessionEntry`, plus a custom `init(from:)` so older CLI payloads missing these fields still decode (the menubar falls back to zero values rather than failing the whole payload).
+
+### Tests
+- Suite grew from 644 → 731 tests across 57 files. New coverage includes: Crush, Mistral Vibe (+ 2 malformed-input cases), Kimi, Codebuff, Cline, IBM Bob, `compactEntry` (9 cases pinning the cap and field-preservation rules), buffer-based `readSessionLines` (5 MB single line, UTF-8 boundary, trailing no-newline), `cache-tier-pricing` updated for the new contract, plan reset per-provider, daily-cache discard-pre-v5.
+
+### Deferred to v2.5.0
+- **Menubar watchdog timer refactor (upstream PR #311, #315, #328).** Wake-recovery / stale-cache / tab-refresh hardening rewrites AppStore with ~10 new state vars + a watchdog architecture. Fork already has #270 (sleep) + stuck-loading recovery; the deeper rewrite is risky to bolt on without a focused session.
+- **Heatmap Optimize-tab Swift view (565-line UI port from #349).** The data structures landed in this release (`RetryTax`, `RoutingWaste`, etc.); the Swift view tree port that consumes them needs a focused session against our diverged HeatmapSection.
 
 ## 2.3.0 - 2026-05-09
 
