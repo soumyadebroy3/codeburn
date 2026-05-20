@@ -30,12 +30,18 @@ final class AppStore {
     var lastError: String?
     var subscription: SubscriptionUsage?
     var subscriptionError: String?
-    var subscriptionLoadState: SubscriptionLoadState = ClaudeCredentialStore.isBootstrapCompleted ? .loading : .notBootstrapped
+    // dormant on launch when previously bootstrapped, so we don't trigger
+    // a keychain prompt unless the user explicitly clicks Connect on the
+    // plan tab. Ports upstream PR #338 — was a real UX bug on ad-hoc
+    // signed builds because keychain ACLs invalidate on every rebuild and
+    // re-prompted on every relaunch. The plan-tab Connect button calls
+    // activateClaudeFromDormant() to transition dormant → loading.
+    var subscriptionLoadState: SubscriptionLoadState = ClaudeCredentialStore.isBootstrapCompleted ? .dormant : .notBootstrapped
     var capacityEstimates: [String: CapacityEstimate] = [:]
 
     var codexUsage: CodexUsage?
     var codexError: String?
-    var codexLoadState: SubscriptionLoadState = CodexCredentialStore.isBootstrapCompleted ? .loading : .notBootstrapped
+    var codexLoadState: SubscriptionLoadState = CodexCredentialStore.isBootstrapCompleted ? .dormant : .notBootstrapped
 
     /// Generation tokens for the in-flight refresh tasks. Incremented on every
     /// disconnect / reset so a fetch that started before the disconnect cannot
@@ -238,6 +244,24 @@ final class AppStore {
         }
     }
 
+    /// User-initiated. Wakes up a previously-bootstrapped Claude session whose
+    /// load state is `dormant` (the on-launch default). Transitions to
+    /// `loading` and pulls quota via `refreshSubscriptionReportingSuccess`,
+    /// which then touches the keychain. Ports upstream PR #338.
+    func activateClaudeFromDormant() async {
+        guard case .dormant = subscriptionLoadState else { return }
+        subscriptionLoadState = .loading
+        _ = await refreshSubscriptionReportingSuccess()
+    }
+
+    /// User-initiated. Wakes up a previously-bootstrapped Codex session whose
+    /// load state is `dormant`. Mirrors `activateClaudeFromDormant`.
+    func activateCodexFromDormant() async {
+        guard case .dormant = codexLoadState else { return }
+        codexLoadState = .loading
+        _ = await refreshCodexReportingSuccess()
+    }
+
     /// User-initiated. Reads Claude's source (this is what triggers the macOS keychain
     /// prompt for `Claude Code-credentials`). Once successful, subsequent background
     /// refreshes go through our own keychain item without prompting.
@@ -268,6 +292,11 @@ final class AppStore {
     /// rather than every attempt.
     @discardableResult
     func refreshSubscriptionReportingSuccess() async -> Bool {
+        // Dormant means "previously bootstrapped but the user hasn't yet
+        // taken an explicit action this session". We refuse to touch the
+        // keychain or hit the refresh endpoint until the user clicks
+        // Connect, which calls `activateClaudeFromDormant()`.
+        if case .dormant = subscriptionLoadState { return false }
         guard ClaudeCredentialStore.isBootstrapCompleted else {
             if subscriptionLoadState != .notBootstrapped {
                 subscriptionLoadState = .notBootstrapped
@@ -345,6 +374,8 @@ final class AppStore {
 
     @discardableResult
     func refreshCodexReportingSuccess() async -> Bool {
+        // Same dormant short-circuit as the Claude path — see refreshSubscriptionReportingSuccess.
+        if case .dormant = codexLoadState { return false }
         guard CodexCredentialStore.isBootstrapCompleted else {
             if codexLoadState != .notBootstrapped { codexLoadState = .notBootstrapped }
             return false
@@ -465,12 +496,13 @@ final class AppStore {
 
     private func claudeQuotaSummary(filter: ProviderFilter) -> QuotaSummary? {
         if case .notBootstrapped = subscriptionLoadState { return nil }
+        if case .dormant = subscriptionLoadState { return nil }
         if case .bootstrapping = subscriptionLoadState { return nil }
         if case .noCredentials = subscriptionLoadState { return nil }
 
         let connection: QuotaSummary.Connection = {
             switch subscriptionLoadState {
-            case .notBootstrapped, .bootstrapping, .noCredentials: return .disconnected
+            case .notBootstrapped, .dormant, .bootstrapping, .noCredentials: return .disconnected
             case .loading: return subscription == nil ? .loading : .stale
             case .loaded: return .connected
             case .failed: return subscription == nil ? .loading : .stale
@@ -503,12 +535,13 @@ final class AppStore {
 
     private func codexQuotaSummary(filter: ProviderFilter) -> QuotaSummary? {
         if case .notBootstrapped = codexLoadState { return nil }
+        if case .dormant = codexLoadState { return nil }
         if case .bootstrapping = codexLoadState { return nil }
         if case .noCredentials = codexLoadState { return nil }
 
         let connection: QuotaSummary.Connection = {
             switch codexLoadState {
-            case .notBootstrapped, .bootstrapping, .noCredentials: return .disconnected
+            case .notBootstrapped, .dormant, .bootstrapping, .noCredentials: return .disconnected
             case .loading: return codexUsage == nil ? .loading : .stale
             case .loaded: return .connected
             case .failed: return codexUsage == nil ? .loading : .stale
@@ -713,6 +746,7 @@ extension Notification.Name {
 
 enum SubscriptionLoadState: Sendable, Equatable {
     case notBootstrapped  // no Keychain access yet — waiting for user to click Connect
+    case dormant          // previously bootstrapped; keychain not yet accessed this session (no prompt fired)
     case bootstrapping    // user clicked Connect; reading Claude's keychain (PROMPTS)
     case loading          // background fetch in progress (subscription may already be populated)
     case loaded           // success; subscription is populated

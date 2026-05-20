@@ -902,6 +902,12 @@ private struct PlanInsight: View {
             switch store.subscriptionLoadState {
             case .notBootstrapped:
                 PlanConnectView { Task { await store.bootstrapSubscription() } }
+            case .dormant:
+                // Previously bootstrapped, but we deferred the keychain
+                // prompt until the user clicked Connect. Show the same
+                // PlanConnectView, but the action now activates via the
+                // existing credential rather than re-bootstrapping.
+                PlanConnectView { Task { await store.activateClaudeFromDormant() } }
             case .bootstrapping:
                 PlanLoadingView()
             case .loading:
@@ -1176,6 +1182,8 @@ private struct CodexPlanInsight: View {
             switch store.codexLoadState {
             case .notBootstrapped:
                 PlanConnectView { Task { await store.bootstrapCodex() } }
+            case .dormant:
+                PlanConnectView { Task { await store.activateCodexFromDormant() } }
             case .bootstrapping:
                 PlanLoadingView()
             case .loading:

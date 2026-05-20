@@ -133,7 +133,7 @@ private struct ClaudeConnectionRow: View {
         case .terminalFailure: return "exclamationmark.triangle.fill"
         case .transientFailure: return "clock.arrow.circlepath"
         case .bootstrapping, .loading: return "ellipsis.circle"
-        case .notBootstrapped, .noCredentials: return "link.circle"
+        case .notBootstrapped, .dormant, .noCredentials: return "link.circle"
         case .failed: return "xmark.circle"
         }
     }
@@ -154,6 +154,7 @@ private struct ClaudeConnectionRow: View {
         case .transientFailure: return "Backing off"
         case .bootstrapping: return "Connecting…"
         case .loading: return "Refreshing…"
+        case .dormant: return "Ready (click Connect)"
         case .notBootstrapped, .noCredentials: return "Not connected"
         case .failed: return "Couldn't load plan data"
         }
@@ -170,6 +171,7 @@ private struct ClaudeConnectionRow: View {
         case .transientFailure: return store.subscriptionError ?? "Anthropic rate-limited; auto-retrying."
         case .bootstrapping: return "macOS may ask permission to read your credentials."
         case .loading: return "Background refresh in progress."
+        case .dormant: return "Credentials cached locally — click Connect to fetch live quota without re-reading your Claude Code keychain entry."
         case .notBootstrapped, .noCredentials: return "Click Connect to read your Claude Code credentials and start tracking quota."
         case .failed: return store.subscriptionError ?? ""
         }
@@ -196,6 +198,12 @@ private struct ClaudeConnectionRow: View {
                 .buttonStyle(.borderedProminent)
         case .notBootstrapped:
             Button("Connect") { Task { await store.bootstrapSubscription() } }
+                .buttonStyle(.borderedProminent)
+        case .dormant:
+            // Cached credentials already exist — activating won't re-prompt
+            // the keychain for `Claude Code-credentials`; we just hit our
+            // own file cache and refresh.
+            Button("Connect") { Task { await store.activateClaudeFromDormant() } }
                 .buttonStyle(.borderedProminent)
         case .bootstrapping:
             ProgressView().controlSize(.small)
@@ -256,7 +264,7 @@ private struct CodexConnectionRow: View {
         case .terminalFailure: return "exclamationmark.triangle.fill"
         case .transientFailure: return "clock.arrow.circlepath"
         case .bootstrapping, .loading: return "ellipsis.circle"
-        case .notBootstrapped, .noCredentials: return "link.circle"
+        case .notBootstrapped, .dormant, .noCredentials: return "link.circle"
         case .failed: return "xmark.circle"
         }
     }
@@ -277,6 +285,7 @@ private struct CodexConnectionRow: View {
         case .transientFailure: return "Backing off"
         case .bootstrapping: return "Connecting…"
         case .loading: return "Refreshing…"
+        case .dormant: return "Ready (click Connect)"
         case .notBootstrapped, .noCredentials: return "Not connected"
         case .failed: return "Couldn't load Codex quota"
         }
@@ -290,9 +299,6 @@ private struct CodexConnectionRow: View {
             }
             return "Live quota tracked from chatgpt.com."
         case .terminalFailure:
-            // Be specific about the cause: the message we already surface in
-            // codexError will say "API-key mode" if that's the situation, so
-            // the generic "run codex login" hint covers both cases.
             if let err = store.codexError, err.lowercased().contains("api-key") {
                 return "Codex is in API-key mode. Run `codex login` and choose a ChatGPT plan to enable quota tracking."
             }
@@ -300,6 +306,7 @@ private struct CodexConnectionRow: View {
         case .transientFailure: return store.codexError ?? "ChatGPT rate-limited; auto-retrying."
         case .bootstrapping: return "Reading ~/.codex/auth.json."
         case .loading: return "Background refresh in progress."
+        case .dormant: return "Credentials cached locally — click Connect to fetch live quota."
         case .notBootstrapped, .noCredentials:
             return "Click Connect to read your Codex CLI credentials. If Connect fails, run `codex login` in your terminal first to create ~/.codex/auth.json."
         case .failed: return store.codexError ?? ""
@@ -327,6 +334,9 @@ private struct CodexConnectionRow: View {
                 .buttonStyle(.borderedProminent)
         case .notBootstrapped:
             Button("Connect") { Task { await store.bootstrapCodex() } }
+                .buttonStyle(.borderedProminent)
+        case .dormant:
+            Button("Connect") { Task { await store.activateCodexFromDormant() } }
                 .buttonStyle(.borderedProminent)
         case .bootstrapping:
             ProgressView().controlSize(.small)
