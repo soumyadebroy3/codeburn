@@ -47,6 +47,11 @@ describe('Menubar snapshot contract (v1)', () => {
       'oneShotRate',
       'outputTokens',
       'providers',
+      // Optimize-tab analytics added in v2.4 (upstream PR #349). When the
+      // caller doesn't pass them, buildMenubarPayload fills in zeroed
+      // defaults so the menubar Swift side can decode every payload.
+      'retryTax',
+      'routingWaste',
       'sessions',
       'topActivities',
       'topModels',

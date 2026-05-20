@@ -1,5 +1,90 @@
 # Changelog
 
+## 2.4.2 - 2026-05-20
+
+Two real fixes that landed once users opened v2.4.1:
+
+1. The Optimize insight pill never appeared because the CLI side that
+   computes `retryTax` + `routingWaste` from session data wasn't wired
+   into `status --format menubar-json`. (The Swift Codable types and
+   view tree shipped, but had no data to render.)
+2. Token display modes lived in `Settings → Display → Metric`, which
+   is "too deep" for what should be a one-tap affordance.
+
+### Added (CLI → menubar)
+- **`current.retryTax` block in `status --format menubar-json`.**
+  Computed from `aggregateModelEfficiency(scanProjects)`. Per-model
+  taxUSD = `retries × (editCostUSD / editTurns)`. Top 5 by tax descend.
+- **`current.routingWaste` block.** Picks the cheapest reliable model
+  (`oneShotRate ≥ 90`, `editTurns ≥ 5`, `costPerEditUSD ≥ $0.01`) as
+  the baseline, then computes `editCostUSD − editTurns × baseline.cost`
+  per pricier model. Top 5 by savings descend.
+
+### Changed (CLI)
+- **`buildMenubarPayload` signature.** Two new optional trailing args:
+  `retryTax?` and `routingWaste?`. When omitted, the function fills in
+  zeroed defaults so older callers stay compatible and the menubar
+  Optimize pill (which gates on `totalUSD > 0 || totalSavingsUSD > 0`)
+  stays hidden until real data arrives.
+
+### Changed (macOS menubar)
+- **Hero number is tap-to-cycle.** Tap the big figure to flip between
+  Cost ($) and Tokens (↑↓). A hover tooltip surfaces the affordance
+  ("Tap to show tokens" / "Tap to show cost"). Selection persists via
+  UserDefaults. Replaces the previous Settings → Display → Metric
+  picker, which has been removed — one obvious affordance, no
+  configuration surface.
+- **`DisplayMetric` enum simplified to two cases** (`.cost`, `.tokens`).
+  Dropped the third "Total Tokens" mode — Tokens mode already shows
+  the combined total as the hero figure plus the output↑ / input↓
+  split as the side caption, so a separate "total-only" view was
+  redundant.
+
+### Security
+- **`ws` transitive dependency CVE-2026-XX (GHSA-58qx-3vcg-4xpx)**
+  uninitialized memory disclosure on the WebSocket parse path. Bumped
+  `ws` 8.0–8.20 → 8.20.1+ via `npm audit fix`. No CodeBurn code uses
+  `ws` directly; the dep arrived via transitive paths in the toolchain.
+
+### Changed (provider sync — drift fixes flagged by pre-release audit)
+- **Swift `ProviderFilter` enum** in `mac/Sources/CodeBurnMenubar/AppStore.swift`
+  expanded to cover all 24 CLI providers. Previously missing: `antigravity`,
+  `codebuff`, `cursor-agent`, `goose`, `mistral-vibe`. The menubar tab
+  for any of these now appears automatically when the CLI emits cost
+  for them. Adds matching `cliArg` mappings + `providerKeys` aliases
+  for human-readable variants. Also added per-provider tints in
+  `AgentTabStrip.swift` so each tab is colour-distinguishable.
+- **Windows tray `Provider` type union** in `windows/src/components/AgentTabStrip.tsx`
+  expanded from 7 entries to 24 to match the CLI list. Previously
+  `antigravity`, `cline`, `codebuff`, `crush`, `cursor-agent`, `droid`,
+  `gemini`, `goose`, `ibm-bob`, `kimi`, `kilo-code`, `kiro`, `mistral-vibe`,
+  `omp`, `openclaw`, `qwen`, `roo-code` couldn't render a tab even when
+  the user had data for them.
+- **`windows/package.json` version synced to `2.4.2`** (was lagging at
+  `2.3.0`). The Tauri tray version now tracks the CLI version on every
+  release tag, matching the macOS menubar's behavior.
+
+### Bumped (every declared dep across both package.json files is now on latest stable)
+Every entry in `package.json` and `windows/package.json` was checked
+against `npm view <pkg> version` and brought up to current stable.
+`npm audit` is clean. Windows tray deps were already current; root
+took a mix of patch + minor + major bumps.
+
+- Root patch: `ink` 7.0.0 → 7.0.3, `react` 19.2.5 → 19.2.6, `tsx` 4.21.0 → 4.22.3, `@types/react` 19.2.14 → 19.2.15.
+- Root minor: `chalk` 5.4.1 → 5.6.2, `tsup` 8.4.0 → 8.5.1.
+- Root **major**: `commander` 13.1.0 → 14.0.3, `@types/node` 22.19.17 → 25.9.1, `typescript` 5.8.0 → 6.0.3, `vitest` 3.1.0 → 4.1.6, `@vitest/coverage-v8` 3.2.4 → 4.1.6.
+- Tray patch: `@tauri-apps/cli` 2.11.1 → 2.11.2, `@types/react` 19.2.14 → 19.2.15, `@vitejs/plugin-react` 6.0.1 → 6.0.2, `vite` 8.0.11 → 8.0.13.
+
+### Changed (tsconfig)
+- Added `"types": ["node"]` to `tsconfig.json`. TypeScript 6 dropped
+  the implicit `node:` module-prefix resolution that v5 fell back to
+  when `@types/node` was present but unspecified — making this
+  explicit restores the previous behaviour on the new compiler.
+
+### Tests
+- `menubar-snapshot-contract.test.ts` updated to assert the two new
+  keys are always present on `current.*`. 731/731 still green.
+
 ## 2.4.1 - 2026-05-20
 
 Patch release that finishes the upstream PR #349 menubar UI port. The

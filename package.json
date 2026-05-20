@@ -1,6 +1,6 @@
 {
   "name": "@soumyadebroy3/codeburn",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "See where your AI coding tokens go - by task, tool, model, and project",
   "type": "module",
   "main": "./dist/cli.js",
@@ -50,19 +50,19 @@
     "access": "public"
   },
   "dependencies": {
-    "chalk": "^5.4.1",
-    "commander": "^13.1.0",
-    "ink": "^7.0.0",
-    "react": "^19.2.5",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "ink": "^7.0.3",
+    "react": "^19.2.6",
     "strip-ansi": "^7.2.0"
   },
   "devDependencies": {
-    "@types/node": "^22.19.17",
-    "@types/react": "^19.2.14",
-    "@vitest/coverage-v8": "^3.2.4",
-    "tsup": "^8.4.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.8.0",
-    "vitest": "^3.1.0"
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@vitest/coverage-v8": "^4.1.6",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }

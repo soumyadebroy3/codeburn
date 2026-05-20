@@ -802,31 +802,39 @@ enum SupportedCurrency: String, CaseIterable, Identifiable {
 
 enum ProviderFilter: String, CaseIterable, Identifiable {
     case all = "All"
+    case antigravity = "Antigravity"
     case claude = "Claude"
     case cline = "Cline"
+    case codebuff = "Codebuff"
     case codex = "Codex"
     case cursor = "Cursor"
+    case cursorAgent = "Cursor Agent"
     case copilot = "Copilot"
+    case crush = "Crush"
     case droid = "Droid"
     case gemini = "Gemini"
+    case goose = "Goose"
     case ibmBob = "IBM Bob"
-    case kiro = "Kiro"
     case kimi = "Kimi"
     case kiloCode = "KiloCode"
+    case kiro = "Kiro"
+    case mistralVibe = "Mistral Vibe"
+    case omp = "OMP"
     case openclaw = "OpenClaw"
     case opencode = "OpenCode"
     case pi = "Pi"
     case qwen = "Qwen"
-    case omp = "OMP"
     case rooCode = "Roo Code"
-    case crush = "Crush"
 
     var id: String { rawValue }
 
     var providerKeys: [String] {
         switch self {
-        case .cursor: ["cursor", "cursor agent"]
+        case .cursor: ["cursor"]
+        case .cursorAgent: ["cursor-agent", "cursor agent"]
         case .cline: ["cline"]
+        case .codebuff: ["codebuff"]
+        case .mistralVibe: ["mistral-vibe", "mistral vibe"]
         case .rooCode: ["roo-code", "roo code"]
         case .kiloCode: ["kilo-code", "kilocode"]
         case .ibmBob: ["ibm-bob", "ibm bob"]
@@ -838,24 +846,29 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
     var cliArg: String {
         switch self {
         case .all: "all"
+        case .antigravity: "antigravity"
         case .claude: "claude"
         case .cline: "cline"
+        case .codebuff: "codebuff"
         case .codex: "codex"
         case .cursor: "cursor"
+        case .cursorAgent: "cursor-agent"
         case .copilot: "copilot"
+        case .crush: "crush"
         case .droid: "droid"
         case .gemini: "gemini"
+        case .goose: "goose"
         case .ibmBob: "ibm-bob"
+        case .kimi: "kimi"
         case .kiloCode: "kilo-code"
         case .kiro: "kiro"
-        case .kimi: "kimi"
+        case .mistralVibe: "mistral-vibe"
+        case .omp: "omp"
         case .openclaw: "openclaw"
         case .opencode: "opencode"
         case .pi: "pi"
         case .qwen: "qwen"
-        case .omp: "omp"
         case .rooCode: "roo-code"
-        case .crush: "crush"
         }
     }
 }
@@ -876,11 +889,12 @@ enum SubscriptionLoadState: Sendable, Equatable {
     case transientFailure(retryAt: Date?)  // 429 / network blip; backing off automatically
 }
 
-/// Hero-figure display mode, persisted via UserDefaults. Upstream PR #349.
+/// Hero-figure display mode, persisted via UserDefaults. Two modes only:
+/// dollars (default) or output↑ / input↓ tokens. The big number is
+/// tap-to-cycle so users don't have to dig through Settings.
 enum DisplayMetric: String {
     case cost
     case tokens
-    case totalTokens
 }
 
 enum InsightMode: String, CaseIterable, Identifiable {

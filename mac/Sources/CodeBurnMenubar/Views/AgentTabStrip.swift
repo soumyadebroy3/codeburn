@@ -478,24 +478,29 @@ extension ProviderFilter {
     @MainActor var color: Color {
         switch self {
         case .all: return Theme.brandAccent
+        case .antigravity: return Color(red: 0x1F/255.0, green: 0x1F/255.0, blue: 0x2E/255.0)
         case .claude: return Theme.categoricalClaude
         case .cline: return Color(red: 0x23/255.0, green: 0x8A/255.0, blue: 0x7E/255.0)
+        case .codebuff: return Color(red: 0xF5/255.0, green: 0x9E/255.0, blue: 0x0B/255.0)
         case .codex: return Theme.categoricalCodex
         case .cursor: return Theme.categoricalCursor
+        case .cursorAgent: return Theme.categoricalCursor
         case .copilot: return Color(red: 0x6D/255.0, green: 0x8F/255.0, blue: 0xA6/255.0)
+        case .crush: return Color(red: 0xE0/255.0, green: 0x6C/255.0, blue: 0x9F/255.0)
         case .droid: return Color(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0)
         case .gemini: return Color(red: 0x44/255.0, green: 0x85/255.0, blue: 0xF4/255.0)
+        case .goose: return Color(red: 0x9B/255.0, green: 0x82/255.0, blue: 0x42/255.0)
         case .ibmBob: return Color(red: 0x0F/255.0, green: 0x62/255.0, blue: 0xFE/255.0)
+        case .kimi: return Color(red: 0xA4/255.0, green: 0xC6/255.0, blue: 0x39/255.0)
         case .kiloCode: return Color(red: 0x00/255.0, green: 0x96/255.0, blue: 0x88/255.0)
         case .kiro: return Color(red: 0x4A/255.0, green: 0x9E/255.0, blue: 0xC4/255.0)
-        case .kimi: return Color(red: 0xA4/255.0, green: 0xC6/255.0, blue: 0x39/255.0)
+        case .mistralVibe: return Color(red: 0xFF/255.0, green: 0x6F/255.0, blue: 0x14/255.0)
+        case .omp: return Color(red: 0x8B/255.0, green: 0x5C/255.0, blue: 0xB0/255.0)
         case .openclaw: return Color(red: 0xDA/255.0, green: 0x70/255.0, blue: 0x56/255.0)
         case .opencode: return Color(red: 0x5B/255.0, green: 0x83/255.0, blue: 0x5B/255.0)
         case .pi: return Color(red: 0xB2/255.0, green: 0x6B/255.0, blue: 0x3D/255.0)
         case .qwen: return Color(red: 0x61/255.0, green: 0x5E/255.0, blue: 0xEB/255.0)
-        case .omp: return Color(red: 0x8B/255.0, green: 0x5C/255.0, blue: 0xB0/255.0)
         case .rooCode: return Color(red: 0x4C/255.0, green: 0xAF/255.0, blue: 0x50/255.0)
-        case .crush: return Color(red: 0xE0/255.0, green: 0x6C/255.0, blue: 0x9F/255.0)
         }
     }
 }

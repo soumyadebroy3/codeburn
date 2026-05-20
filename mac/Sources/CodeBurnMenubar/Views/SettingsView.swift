@@ -40,14 +40,6 @@ private struct GeneralSettingsTab: View {
                         Text(code).tag(code)
                     }
                 }
-                Picker("Metric", selection: Binding(
-                    get: { store.displayMetric },
-                    set: { store.displayMetric = $0 }
-                )) {
-                    Text("Cost ($)").tag(DisplayMetric.cost)
-                    Text("Tokens (↑↓)").tag(DisplayMetric.tokens)
-                    Text("Total Tokens").tag(DisplayMetric.totalTokens)
-                }
                 Picker("Accent", selection: Binding(
                     get: { store.accentPreset },
                     set: { store.accentPreset = $0 }

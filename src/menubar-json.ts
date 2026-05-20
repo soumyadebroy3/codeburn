@@ -99,6 +99,35 @@ export type MenubarPayload = {
       calls: number
     }>
     providers: Record<string, number>
+    /// Retry tax — money wasted on edit retries, per model. Feeds the
+    /// menubar Optimize tab (upstream PR #349). When the totals are zero
+    /// the Optimize pill stays hidden by the Swift side.
+    retryTax: {
+      totalUSD: number
+      retries: number
+      editTurns: number
+      byModel: Array<{
+        name: string
+        taxUSD: number
+        retries: number
+        retriesPerEdit: number | null
+      }>
+    }
+    /// Routing waste — counterfactual savings vs the cheapest reliable
+    /// model. Same payload contract as retryTax. Upstream PR #349.
+    routingWaste: {
+      totalSavingsUSD: number
+      baselineModel: string
+      baselineCostPerEdit: number
+      byModel: Array<{
+        name: string
+        costPerEdit: number
+        editTurns: number
+        actualUSD: number
+        counterfactualUSD: number
+        savingsUSD: number
+      }>
+    }
   }
   optimize: {
     findingCount: number
@@ -207,12 +236,31 @@ export function computeValuation(
   }
 }
 
+/// Empty defaults for the retry-tax / routing-waste blocks. Used when the
+/// caller (currently only the menubar-json status path) hasn't computed
+/// model-efficiency yet — keeps the menubar Optimize pill hidden via the
+/// `totalUSD > 0 || totalSavingsUSD > 0` check on the Swift side.
+const EMPTY_RETRY_TAX: MenubarPayload['current']['retryTax'] = {
+  totalUSD: 0,
+  retries: 0,
+  editTurns: 0,
+  byModel: [],
+}
+const EMPTY_ROUTING_WASTE: MenubarPayload['current']['routingWaste'] = {
+  totalSavingsUSD: 0,
+  baselineModel: '',
+  baselineCostPerEdit: 0,
+  byModel: [],
+}
+
 export function buildMenubarPayload(
   current: PeriodData,
   providers: ProviderCost[],
   optimize: OptimizeResult | null,
   dailyHistory?: DailyHistoryEntry[],
   valuation?: ValuationBlock,
+  retryTax?: MenubarPayload['current']['retryTax'],
+  routingWaste?: MenubarPayload['current']['routingWaste'],
 ): MenubarPayload {
   return {
     schemaVersion: MENUBAR_SCHEMA_VERSION,
@@ -230,6 +278,8 @@ export function buildMenubarPayload(
       topActivities: buildTopActivities(current.categories),
       topModels: buildTopModels(current.models),
       providers: buildProviders(providers),
+      retryTax: retryTax ?? EMPTY_RETRY_TAX,
+      routingWaste: routingWaste ?? EMPTY_ROUTING_WASTE,
     },
     optimize: buildOptimize(optimize),
     history: buildHistory(dailyHistory),

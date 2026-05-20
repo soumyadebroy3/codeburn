@@ -1,6 +1,6 @@
 {
   "name": "codeburn-tray",
-  "version": "2.3.0",
+  "version": "2.4.2",
   "description": "CodeBurn Windows system-tray app (Tauri). Mirrors the macOS Swift menubar.",
   "type": "module",
   "private": true,
@@ -20,12 +20,12 @@
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.1",
-    "@types/react": "^19.2.14",
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.0.2",
     "esbuild": "^0.28.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.11"
+    "vite": "^8.0.13"
   }
 }

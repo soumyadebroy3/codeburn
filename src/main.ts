@@ -701,7 +701,59 @@ program
           monthlyUsd: planRecord.monthlyUsd,
         })
       }
-      console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory, valuation)))
+
+      // Optimize-tab analytics (upstream PR #349). retryTax is the dollar
+      // value of edit retries observed in scanProjects, broken down per
+      // model. routingWaste is the counterfactual saving the user would
+      // have realized by routing those edits to the cheapest reliable
+      // model (≥90% one-shot rate, ≥5 edits). Both feed the menubar's
+      // Optimize insight pill, which auto-hides when both totals are 0.
+      const effMap = aggregateModelEfficiency(scanProjects)
+      const retryTaxByModel = [...effMap.values()]
+        .filter(m => m.retries > 0 && m.editTurns > 0)
+        .map(m => ({
+          name: m.model,
+          taxUSD: m.retries * (m.editCostUSD / m.editTurns),
+          retries: m.retries,
+          retriesPerEdit: m.retriesPerEdit,
+        }))
+        .sort((a, b) => b.taxUSD - a.taxUSD)
+      const retryTax = {
+        totalUSD: retryTaxByModel.reduce((s, m) => s + m.taxUSD, 0),
+        retries: retryTaxByModel.reduce((s, m) => s + m.retries, 0),
+        editTurns: [...effMap.values()].filter(m => m.retries > 0).reduce((s, m) => s + m.editTurns, 0),
+        byModel: retryTaxByModel.slice(0, 5),
+      }
+      const reliableModels = [...effMap.values()]
+        .filter(m => m.oneShotRate !== null && m.oneShotRate >= 90 && m.editTurns >= 5
+          && (m.costPerEditUSD ?? 0) >= 0.01)
+        .sort((a, b) => (a.costPerEditUSD ?? Infinity) - (b.costPerEditUSD ?? Infinity))
+      const baseline = reliableModels[0]
+      const routingWasteByModel = baseline
+        ? [...effMap.values()]
+            .filter(m => m.model !== baseline.model && m.editTurns > 0 && (m.costPerEditUSD ?? 0) > (baseline.costPerEditUSD ?? 0))
+            .map(m => {
+              const counterfactual = m.editTurns * (baseline.costPerEditUSD ?? 0)
+              return {
+                name: m.model,
+                costPerEdit: m.costPerEditUSD ?? 0,
+                editTurns: m.editTurns,
+                actualUSD: m.editCostUSD,
+                counterfactualUSD: counterfactual,
+                savingsUSD: m.editCostUSD - counterfactual,
+              }
+            })
+            .filter(m => m.savingsUSD > 0)
+            .sort((a, b) => b.savingsUSD - a.savingsUSD)
+        : []
+      const routingWaste = {
+        totalSavingsUSD: routingWasteByModel.reduce((s, m) => s + m.savingsUSD, 0),
+        baselineModel: baseline?.model ?? '',
+        baselineCostPerEdit: baseline?.costPerEditUSD ?? 0,
+        byModel: routingWasteByModel.slice(0, 5),
+      }
+
+      console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory, valuation, retryTax, routingWaste)))
       return
     }
 
