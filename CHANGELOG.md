@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.4.1 - 2026-05-20
+
+Patch release that finishes the upstream PR #349 menubar UI port. The
+v2.4.0 release shipped the underlying analytics structs and the
+Heatmap Optimize insight tab but missed the hero / settings / status
+surfaces. This release closes that gap; no CLI changes.
+
+### Added (macOS menubar)
+- **Hero token display modes.** New picker in Settings → Display → Metric
+  switches the big number between **Cost ($)**, **Tokens (↑↓)** (output up,
+  input down — the agent's perspective), and **Total Tokens** (combined).
+  Persisted via UserDefaults. Same idea as the upstream port; matches
+  ccusage and tokscale's per-call display flexibility.
+- **Daily budget alerts.** New Settings → Alerts → Daily budget picker
+  (Off / $25 / $50 / $100 / $200 / $500). When today's spend crosses the
+  budget, the menu bar flame tints yellow and the hero shows a warning
+  banner: "Daily budget of $X exceeded". Driven from `store.todayPayload`
+  so the alert fires regardless of which period is currently selected
+  in the popover. Quota-severity tint still wins over the budget tint
+  so a hard-red plan crisis remains glanceable.
+
+### Changed (macOS menubar)
+- **MenuBarContent empty-cache fallback is three-state.** Cold-load
+  spinner only shows while a refresh is actually in flight (or has
+  never been attempted). If we attempted, the attempt finished, and
+  there's still no data — render the retry card instead of an
+  indefinite spinner, even when no `lastError` was set (this happens
+  after sleep/wake or a cancelled tab switch). Uses the new
+  `AppStore.isCurrentKeyLoading` and `AppStore.hasAttemptedCurrentKeyLoad`
+  helpers that derive from the watchdog state added in v2.4.0.
+- **Dormant connection copy.** Settings → Claude / Codex tabs now read
+  "Ready" + "Tap Load Quota to fetch live usage from \<provider\>" and
+  the button is labelled "Load Quota" (not "Connect") for the dormant
+  state. Click no longer re-bootstraps; it refreshes from the cached
+  credential. Matches upstream's wording.
+- **Update badge recovers from a failed update check.** When the periodic
+  `UpdateChecker.check()` records an `updateError`, the badge appears
+  with an orange triangle icon and "Retry check" label. Clicking it
+  re-runs the check instead of waiting for the next periodic tick.
+  Tooltip carries the error string.
+
+### AppStore additions (internal)
+- `DisplayMetric` enum (`.cost` / `.tokens` / `.totalTokens`) with
+  UserDefaults backing via `CodeBurnDisplayMetric`.
+- `dailyBudget: Double` UserDefault-backed via `CodeBurnDailyBudget`
+  (0 disables).
+- `isCurrentKeyLoading` and `hasAttemptedCurrentKeyLoad` derived from
+  existing `inFlightKeys` + `attemptedKeys` so the MenuBarContent
+  overlay logic doesn't have to inspect those sets directly.
+
 ## 2.4.0 - 2026-05-20
 
 Twenty-six-commit upstream sync against `getagentseal/codeburn`. Brings six

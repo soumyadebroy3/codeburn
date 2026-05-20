@@ -38,6 +38,17 @@ final class AppStore {
     }
     var showingAccentPicker: Bool = false
     var currency: String = "USD"
+    /// What the hero figure shows: dollars, an up/down token split, or a
+    /// combined token total. Persisted across launches. Upstream PR #349.
+    var displayMetric: DisplayMetric = DisplayMetric(rawValue: UserDefaults.standard.string(forKey: "CodeBurnDisplayMetric") ?? "") ?? .cost {
+        didSet { UserDefaults.standard.set(displayMetric.rawValue, forKey: "CodeBurnDisplayMetric") }
+    }
+    /// Dollar threshold above which the menubar flame tints orange and the
+    /// hero shows a "Daily budget exceeded" warning. 0 disables the alert.
+    /// Upstream PR #349.
+    var dailyBudget: Double = UserDefaults.standard.double(forKey: "CodeBurnDailyBudget") {
+        didSet { UserDefaults.standard.set(dailyBudget, forKey: "CodeBurnDailyBudget") }
+    }
     var isLoading: Bool { loadingCount > 0 }
     private var loadingCount: Int = 0
     var lastError: String?
@@ -157,6 +168,19 @@ final class AppStore {
     /// failed/cancelled, and now the popover is empty" — the watchdog
     /// reaches for a fresh attempt in the second case.
     private var attemptedKeys: Set<PayloadCacheKey> = []
+
+    /// True while a refresh attempt is in flight for the popover's current
+    /// (period, provider) key. Distinct from `isLoading` (any in-flight key)
+    /// so views can show a key-scoped spinner without false positives from
+    /// quiet background refreshes for other keys. Upstream PR #349.
+    var isCurrentKeyLoading: Bool { inFlightKeys.contains(currentKey) }
+
+    /// True once we have at least attempted (success or failure) to load the
+    /// popover's current key this session. Lets the empty-cache fallback in
+    /// MenuBarContent distinguish "still cold-loading" from "the attempt
+    /// finished, returned no data, and now we should surface an error
+    /// retry card instead of an infinite spinner." Upstream PR #349.
+    var hasAttemptedCurrentKeyLoad: Bool { attemptedKeys.contains(currentKey) }
 
     /// True if any in-flight refresh has been stuck past the watchdog budget.
     var hasStaleLoading: Bool {
@@ -850,6 +874,13 @@ enum SubscriptionLoadState: Sendable, Equatable {
     case failed           // generic non-recoverable failure
     case terminalFailure(reason: String?)  // refresh-token invalid; user must reconnect
     case transientFailure(retryAt: Date?)  // 429 / network blip; backing off automatically
+}
+
+/// Hero-figure display mode, persisted via UserDefaults. Upstream PR #349.
+enum DisplayMetric: String {
+    case cost
+    case tokens
+    case totalTokens
 }
 
 enum InsightMode: String, CaseIterable, Identifiable {

@@ -40,6 +40,14 @@ private struct GeneralSettingsTab: View {
                         Text(code).tag(code)
                     }
                 }
+                Picker("Metric", selection: Binding(
+                    get: { store.displayMetric },
+                    set: { store.displayMetric = $0 }
+                )) {
+                    Text("Cost ($)").tag(DisplayMetric.cost)
+                    Text("Tokens (↑↓)").tag(DisplayMetric.tokens)
+                    Text("Total Tokens").tag(DisplayMetric.totalTokens)
+                }
                 Picker("Accent", selection: Binding(
                     get: { store.accentPreset },
                     set: { store.accentPreset = $0 }
@@ -48,6 +56,23 @@ private struct GeneralSettingsTab: View {
                         Text(preset.rawValue).tag(preset)
                     }
                 }
+            }
+
+            Section("Alerts") {
+                Picker("Daily budget", selection: Binding(
+                    get: { store.dailyBudget },
+                    set: { store.dailyBudget = $0 }
+                )) {
+                    Text("Off").tag(0.0)
+                    Text("$25").tag(25.0)
+                    Text("$50").tag(50.0)
+                    Text("$100").tag(100.0)
+                    Text("$200").tag(200.0)
+                    Text("$500").tag(500.0)
+                }
+                Text("Flame icon turns yellow when you pass the daily budget.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -154,7 +179,7 @@ private struct ClaudeConnectionRow: View {
         case .transientFailure: return "Backing off"
         case .bootstrapping: return "Connecting…"
         case .loading: return "Refreshing…"
-        case .dormant: return "Ready (click Connect)"
+        case .dormant: return "Ready"
         case .notBootstrapped, .noCredentials: return "Not connected"
         case .failed: return "Couldn't load plan data"
         }
@@ -171,7 +196,7 @@ private struct ClaudeConnectionRow: View {
         case .transientFailure: return store.subscriptionError ?? "Anthropic rate-limited; auto-retrying."
         case .bootstrapping: return "macOS may ask permission to read your credentials."
         case .loading: return "Background refresh in progress."
-        case .dormant: return "Credentials cached locally — click Connect to fetch live quota without re-reading your Claude Code keychain entry."
+        case .dormant: return "Tap Load Quota to fetch live usage from Anthropic."
         case .notBootstrapped, .noCredentials: return "Click Connect to read your Claude Code credentials and start tracking quota."
         case .failed: return store.subscriptionError ?? ""
         }
@@ -202,8 +227,9 @@ private struct ClaudeConnectionRow: View {
         case .dormant:
             // Cached credentials already exist — activating won't re-prompt
             // the keychain for `Claude Code-credentials`; we just hit our
-            // own file cache and refresh.
-            Button("Connect") { Task { await store.activateClaudeFromDormant() } }
+            // own file cache and refresh. Button copy matches upstream
+            // "Load Quota" since that's what the click actually does.
+            Button("Load Quota") { Task { await store.activateClaudeFromDormant() } }
                 .buttonStyle(.borderedProminent)
         case .bootstrapping:
             ProgressView().controlSize(.small)
@@ -285,7 +311,7 @@ private struct CodexConnectionRow: View {
         case .transientFailure: return "Backing off"
         case .bootstrapping: return "Connecting…"
         case .loading: return "Refreshing…"
-        case .dormant: return "Ready (click Connect)"
+        case .dormant: return "Ready"
         case .notBootstrapped, .noCredentials: return "Not connected"
         case .failed: return "Couldn't load Codex quota"
         }
@@ -306,7 +332,7 @@ private struct CodexConnectionRow: View {
         case .transientFailure: return store.codexError ?? "ChatGPT rate-limited; auto-retrying."
         case .bootstrapping: return "Reading ~/.codex/auth.json."
         case .loading: return "Background refresh in progress."
-        case .dormant: return "Credentials cached locally — click Connect to fetch live quota."
+        case .dormant: return "Tap Load Quota to fetch live usage from chatgpt.com."
         case .notBootstrapped, .noCredentials:
             return "Click Connect to read your Codex CLI credentials. If Connect fails, run `codex login` in your terminal first to create ~/.codex/auth.json."
         case .failed: return store.codexError ?? ""
@@ -336,7 +362,7 @@ private struct CodexConnectionRow: View {
             Button("Connect") { Task { await store.bootstrapCodex() } }
                 .buttonStyle(.borderedProminent)
         case .dormant:
-            Button("Connect") { Task { await store.activateCodexFromDormant() } }
+            Button("Load Quota") { Task { await store.activateCodexFromDormant() } }
                 .buttonStyle(.borderedProminent)
         case .bootstrapping:
             ProgressView().controlSize(.small)

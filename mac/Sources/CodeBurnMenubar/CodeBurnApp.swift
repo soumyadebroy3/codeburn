@@ -469,7 +469,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // warning/critical/danger override with a fixed palette color so the
         // user gets a glanceable signal even when the menu bar is busy.
         let aggregate = store.aggregateQuotaStatus
-        let tint = Self.flameTint(for: aggregate.severity)
+        // Daily-budget override: if the user has set a daily budget on the
+        // Settings → Alerts panel and today's spend has crossed it, tint
+        // the flame yellow so it's glanceable from the menu bar even when
+        // no provider quota has hit a warning. Quota severity still wins
+        // (a hard-red plan crisis matters more than budget overrun).
+        // Upstream PR #349.
+        let quotaTint = Self.flameTint(for: aggregate.severity)
+        let overBudget = store.dailyBudget > 0
+            && (store.todayPayload?.current.cost ?? 0) >= store.dailyBudget
+        let tint: NSColor? = quotaTint ?? (overBudget ? .systemYellow : nil)
         let flameConfig: NSImage.SymbolConfiguration
         if let tint {
             flameConfig = baseConfig.applying(.init(paletteColors: [tint]))

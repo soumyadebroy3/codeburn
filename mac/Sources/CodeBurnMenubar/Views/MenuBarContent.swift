@@ -41,13 +41,22 @@ struct MenuBarContent: View {
                     }
                 }
 
-                // Overlay fires only on cold cache for the current key. This
-                // avoids the 1-frame `$0.00` flash on first-time period/provider
-                // switches. When the fetch fails (CLI subprocess timeout, parse
-                // error, etc.), surface a retry card instead of leaving the
-                // user stuck on a perpetual "Loading..." spinner.
+                // Overlay fires only on cold cache for the current key. Three
+                // states, in priority order (upstream PR #349):
+                //   1. We're actively loading this key OR we've never even
+                //      tried it yet — show the spinner.
+                //   2. We have an explicit fetch error — show the retry card
+                //      with the surfaced error text.
+                //   3. We attempted, returned nothing, and have no error
+                //      either — the attempt was abandoned mid-flight (e.g.
+                //      after sleep/wake or a cancelled tab switch). Show a
+                //      retry card with a generic explanatory message instead
+                //      of an indefinite spinner.
                 if !store.hasCachedData {
-                    if let err = store.lastError, !store.isLoading {
+                    if store.isCurrentKeyLoading || !store.hasAttemptedCurrentKeyLoad {
+                        BurnLoadingOverlay(periodLabel: store.selectedPeriod.rawValue)
+                            .transition(.opacity)
+                    } else if let err = store.lastError {
                         FetchErrorOverlay(
                             error: err,
                             periodLabel: store.selectedPeriod.rawValue,
@@ -55,8 +64,12 @@ struct MenuBarContent: View {
                         )
                         .transition(.opacity)
                     } else {
-                        BurnLoadingOverlay(periodLabel: store.selectedPeriod.rawValue)
-                            .transition(.opacity)
+                        FetchErrorOverlay(
+                            error: "The last refresh stopped before returning data. CodeBurn will keep retrying, or you can retry now.",
+                            periodLabel: store.selectedPeriod.rawValue,
+                            retry: { Task { await store.refresh(includeOptimize: false, force: true, showLoading: true) } }
+                        )
+                        .transition(.opacity)
                     }
                 }
             }
@@ -272,7 +285,7 @@ private struct Header: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if updateChecker.updateAvailable {
+                if updateChecker.updateAvailable || updateChecker.updateError != nil {
                     UpdateBadge()
                 }
                 AccentPicker()
@@ -402,27 +415,46 @@ private struct UpdateBadge: View {
 
     var body: some View {
         Button {
-            updateChecker.performUpdate()
+            // When an update is genuinely available, click triggers the
+            // install. When the badge is only showing because of an
+            // update-check error, click re-runs the check so the user can
+            // recover without waiting for the next periodic tick.
+            // Upstream PR #349.
+            if updateChecker.updateAvailable {
+                updateChecker.performUpdate()
+            } else {
+                Task { await updateChecker.check() }
+            }
         } label: {
             HStack(spacing: 4) {
                 if updateChecker.isUpdating {
                     ProgressView()
                         .controlSize(.mini)
                         .scaleEffect(0.7)
+                } else if updateChecker.updateError != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
                 } else {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 10))
                 }
-                Text(updateChecker.isUpdating ? "Updating..." : "Update")
+                Text(badgeLabel)
                     .font(.system(size: 10, weight: .medium))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
         }
         .buttonStyle(.borderedProminent)
-        .tint(Theme.brandAccent)
+        .tint(updateChecker.updateError != nil && !updateChecker.updateAvailable ? .orange : Theme.brandAccent)
         .controlSize(.mini)
         .disabled(updateChecker.isUpdating)
+        .help(updateChecker.updateError ?? "")
+    }
+
+    private var badgeLabel: String {
+        if updateChecker.isUpdating { return "Updating..." }
+        if updateChecker.updateError != nil && !updateChecker.updateAvailable { return "Retry check" }
+        return "Update"
     }
 }
 
