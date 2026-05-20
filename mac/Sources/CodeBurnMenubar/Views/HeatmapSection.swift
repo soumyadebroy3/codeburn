@@ -104,15 +104,24 @@ private struct InsightPillSwitcher: View {
     let visibleModes: [InsightMode]
 
     var body: some View {
-        HStack(spacing: 4) {
+        // 6-pill row (Plan / Trend / Forecast / Pulse / Stats / Optimize)
+        // must fit inline in the popover width without wrapping or
+        // scrolling. .lineLimit(1) + .fixedSize stops SwiftUI's HStack
+        // from proposing a sub-content width to each Button (which is
+        // what was wrapping "Forecast" and "Optimize" into two lines).
+        // Padding + font dialled down so the row's intrinsic width
+        // stays inside the popover's content area.
+        HStack(spacing: 3) {
             ForEach(visibleModes) { mode in
                 Button {
                     selected = mode
                 } label: {
                     Text(mode.rawValue)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(selected == mode ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
