@@ -858,6 +858,7 @@ enum InsightMode: String, CaseIterable, Identifiable {
     case forecast = "Forecast"
     case pulse = "Pulse"
     case stats = "Stats"
+    case optimize = "Optimize"
     var id: String { rawValue }
 }
 

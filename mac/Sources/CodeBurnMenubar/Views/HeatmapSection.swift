@@ -59,9 +59,15 @@ struct HeatmapSection: View {
         // implemented for Claude (Anthropic) and Codex (ChatGPT). Hidden on
         // All / Cursor / Droid / Gemini / Copilot until those providers ship
         // their own quota data sources.
+        // Optimize is hidden when both retry tax and routing waste are zero
+        // — the panel would otherwise render as an empty divider stack.
         InsightMode.allCases.filter { mode in
             if mode == .plan {
                 return store.selectedProvider == .claude || store.selectedProvider == .codex
+            }
+            if mode == .optimize {
+                return store.payload.current.retryTax.totalUSD > 0
+                    || store.payload.current.routingWaste.totalSavingsUSD > 0
             }
             return true
         }
@@ -86,6 +92,7 @@ struct HeatmapSection: View {
         case .forecast: ForecastInsight(days: store.payload.history.daily)
         case .pulse: PulseInsight(payload: store.payload)
         case .stats: StatsInsight(payload: store.payload)
+        case .optimize: OptimizeInsight(payload: store.payload)
         }
     }
 }
@@ -1399,3 +1406,208 @@ private func relativeReset(_ date: Date) -> String {
     return "in \(days)d"
 }
 
+// MARK: - Optimize tab (upstream PR #349)
+//
+// Three views power the Optimize insight: a header that sums retry tax +
+// routing waste against total spend, and two collapsible per-source
+// sections. Data is fed via the new RetryTax / RoutingWaste Codable
+// structs in MenubarPayload (added in v2.4.0 P5.23). When both totals
+// are zero the parent pill switcher hides the Optimize mode entirely.
+
+private struct OptimizeInsight: View {
+    let payload: MenubarPayload
+
+    var body: some View {
+        let totalWaste = payload.current.retryTax.totalUSD + payload.current.routingWaste.totalSavingsUSD
+        let cost = payload.current.cost
+
+        VStack(alignment: .leading, spacing: 12) {
+            if totalWaste > 0, cost > 0 {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Potential savings")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        Text(totalWaste.asCompactCurrency())
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.orange)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(Int((totalWaste / cost * 100).rounded()))% of spend")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.orange.opacity(0.8))
+                        Text("could be optimized")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.quaternary)
+                    }
+                }
+                .padding(.bottom, 2)
+            }
+
+            RetryTaxSection(retryTax: payload.current.retryTax, totalCost: cost)
+            RoutingWasteSection(routingWaste: payload.current.routingWaste, totalCost: cost)
+        }
+    }
+}
+
+private struct RetryTaxSection: View {
+    let retryTax: RetryTax
+    let totalCost: Double
+    @State private var expanded = false
+
+    var body: some View {
+        if retryTax.totalUSD > 0 {
+            Divider().opacity(0.5)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.2.squarepath")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.orange)
+                    Text("Retry tax")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Text(retryTax.totalUSD.asCompactCurrency())
+                        .font(.codeMono(size: 11, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .monospacedDigit()
+                    if totalCost > 0 {
+                        Text("(\(Int((retryTax.totalUSD / totalCost * 100).rounded()))%)")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.quaternary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        expanded.toggle()
+                    }
+                }
+
+                Text("\(retryTax.retries) retries across \(retryTax.editTurns) edits")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.quaternary)
+
+                if expanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(retryTax.byModel.enumerated()), id: \.offset) { idx, model in
+                            HStack(spacing: 0) {
+                                Text(model.name)
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if let rpe = model.retriesPerEdit {
+                                    Text(String(format: "%.1f ret/edit", rpe))
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.quaternary)
+                                        .padding(.trailing, 8)
+                                }
+                                Text(model.taxUSD.asCompactCurrency())
+                                    .font(.codeMono(size: 10, weight: .semibold))
+                                    .foregroundStyle(.orange.opacity(0.85))
+                                    .monospacedDigit()
+                            }
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 6)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(.orange.opacity(0.05)))
+                            .transition(
+                                .asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top))
+                                        .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(Double(idx) * 0.03)),
+                                    removal: .opacity.animation(.easeOut(duration: 0.12))
+                                )
+                            )
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+        }
+    }
+}
+
+private struct RoutingWasteSection: View {
+    let routingWaste: RoutingWaste
+    let totalCost: Double
+    @State private var expanded = false
+
+    var body: some View {
+        if routingWaste.totalSavingsUSD > 0 {
+            Divider().opacity(0.5)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.swap")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.purple)
+                    Text("Routing waste")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Text(routingWaste.totalSavingsUSD.asCompactCurrency())
+                        .font(.codeMono(size: 11, weight: .bold))
+                        .foregroundStyle(.purple)
+                        .monospacedDigit()
+                    if totalCost > 0 {
+                        Text("(\(Int((routingWaste.totalSavingsUSD / totalCost * 100).rounded()))%)")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.quaternary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        expanded.toggle()
+                    }
+                }
+
+                if !routingWaste.baselineModel.isEmpty {
+                    Text("vs \(routingWaste.baselineModel) @ \(routingWaste.baselineCostPerEdit.asCompactCurrency())/edit")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.quaternary)
+                }
+
+                if expanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(routingWaste.byModel.enumerated()), id: \.offset) { idx, model in
+                            HStack(spacing: 0) {
+                                Text(model.name)
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(String(format: "$%.2f/edit", model.costPerEdit))
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.quaternary)
+                                    .padding(.trailing, 8)
+                                Text(model.savingsUSD.asCompactCurrency())
+                                    .font(.codeMono(size: 10, weight: .semibold))
+                                    .foregroundStyle(.purple.opacity(0.85))
+                                    .monospacedDigit()
+                            }
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 6)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(.purple.opacity(0.05)))
+                            .transition(
+                                .asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top))
+                                        .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(Double(idx) * 0.03)),
+                                    removal: .opacity.animation(.easeOut(duration: 0.12))
+                                )
+                            )
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+        }
+    }
+}
