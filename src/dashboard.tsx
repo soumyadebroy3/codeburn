@@ -251,7 +251,12 @@ function DailyActivity({ projects, days = 14, pw, bw }: { projects: ProjectSumma
   )
 }
 
-const _home = homedir()
+// homedir() returns backslashes on Windows (e.g. "C:\Users\runneradmin").
+// We normalize absPath to forward slashes below, so _home and _homePrefix
+// must be normalized too — otherwise startsWith misses and the path falls
+// through to the "split on /" branch, leaving the home prefix on the
+// rendered string. Caught on Windows CI after porting upstream PR #320.
+const _home = homedir().replace(/\\/g, '/')
 const _homePrefix = _home.endsWith('/') ? _home : _home + '/'
 
 export function shortProject(absPath: string): string {
