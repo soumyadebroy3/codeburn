@@ -38,17 +38,17 @@ prompt. Adopts the upstream `assets/providers/` icon convention and the
 - **JournalEntry compaction.** Strip heavy fields (text, thinking, tool_result blocks) right after `JSON.parse` in the JSONL hot loop. User text capped at 2000 chars total; bash commands capped at 2000 chars; max 500 tool_use blocks; max 1000 deferred-tool added names per attachment. Preserves cache_creation 1h/5m breakdown for #317 pricing accuracy. Ports upstream PR #335.
 - **Session cache cleared between period parses.** `status --format json` parses today and month sequentially with an explicit `clearSessionCache()` between them so both `ProjectSummary` result sets are not pinned in RAM at once.
 
+### Added (macOS menubar)
+- **Heatmap Optimize insight tab (#349).** New `.optimize` pill in the insight switcher exposes the retry-tax + routing-waste analytics added in this release. `OptimizeInsight` shows total potential savings as a percentage of spend, then renders two collapsible sections (`RetryTaxSection`, `RoutingWasteSection`) with per-model breakdowns. Pill auto-hides when both totals are zero so the panel never renders as an empty divider stack.
+
 ### Changed (macOS menubar)
 - **Deferred keychain prompt.** New `dormant` load state suppresses keychain reads on launch when previously bootstrapped — no prompt fires until the user clicks Connect on the plan tab. Ad-hoc-signed builds used to re-prompt on every relaunch because keychain ACLs invalidate on rebuild. Ports upstream PR #338.
 - **Provider strip mouse-wheel scrollable.** `AgentTabStrip` now consumes horizontal scroll wheel events and wraps the tab list in a scrollable container. Trackpad events pass through. Ports upstream PR #334.
 - **MenubarPayload extended for Optimize-tab analytics.** Adds `RetryTax`, `RoutingWaste`, `ProjectEntry`, `ModelEfficiencyEntry`, `TopSessionEntry`, plus a custom `init(from:)` so older CLI payloads missing these fields still decode (the menubar falls back to zero values rather than failing the whole payload).
+- **Time-based watchdog clears stuck loading state.** New `resetStaleLoadingState()` on AppStore drops loading flags for keys whose refresh attempt is past the 60 s watchdog budget, logs which keys were cleared, and decrements `loadingCount` accordingly. CodeBurnApp's refresh loop calls it at every tick — recovers from wedged "Loading…" overlay after sleep/wake or network blips without the user needing to relaunch. New computed properties (`hasStaleLoading`, `staleInteractivePayloadAgeSeconds`, `shouldResetInteractiveRefreshPipeline`, etc.) expose the watchdog signal to future views. Ports the user-visible behaviour of upstream PRs #311 / #328 in a lightweight form that doesn't require rewriting the per-key loading-count architecture.
 
 ### Tests
 - Suite grew from 644 → 731 tests across 57 files. New coverage includes: Crush, Mistral Vibe (+ 2 malformed-input cases), Kimi, Codebuff, Cline, IBM Bob, `compactEntry` (9 cases pinning the cap and field-preservation rules), buffer-based `readSessionLines` (5 MB single line, UTF-8 boundary, trailing no-newline), `cache-tier-pricing` updated for the new contract, plan reset per-provider, daily-cache discard-pre-v5.
-
-### Deferred to v2.5.0
-- **Menubar watchdog timer refactor (upstream PR #311, #315, #328).** Wake-recovery / stale-cache / tab-refresh hardening rewrites AppStore with ~10 new state vars + a watchdog architecture. Fork already has #270 (sleep) + stuck-loading recovery; the deeper rewrite is risky to bolt on without a focused session.
-- **Heatmap Optimize-tab Swift view (565-line UI port from #349).** The data structures landed in this release (`RetryTax`, `RoutingWaste`, etc.); the Swift view tree port that consumes them needs a focused session against our diverged HeatmapSection.
 
 ## 2.3.0 - 2026-05-09
 
