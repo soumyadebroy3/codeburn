@@ -286,6 +286,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             while !Task.isCancelled {
                 guard let self else { return }
+                // Watchdog: drop loading flags for keys whose refresh
+                // attempt is past the watchdog budget. Recovers from
+                // wedged-loading after sleep/wake or a network blip
+                // without needing the user to relaunch the app.
+                // Ports upstream PR #311 / #328 in lightweight form.
+                if self.store.resetStaleLoadingState() {
+                    // Watchdog actually cleared something. Treat this
+                    // like a fresh tick so the popover repaints without
+                    // the stale overlay even if `sinceLast` would otherwise
+                    // skip below.
+                    self.refreshStatusButton()
+                }
                 // Skip the loop's tick if a wake / manual / distributed-
                 // notification refresh just ran. Without this gate, every
                 // wake produced two refreshes (forceRefresh from the wake

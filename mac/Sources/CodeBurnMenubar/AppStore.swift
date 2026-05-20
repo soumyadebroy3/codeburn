@@ -3,6 +3,19 @@ import Observation
 
 private let cacheTTLSeconds: TimeInterval = 30
 
+/// Wall-clock budget after which an in-flight refresh is considered stuck —
+/// the periodic watchdog in CodeBurnApp will then call
+/// `resetStaleLoadingState()` to clear loadingCount + inFlightKeys so the
+/// next user interaction can re-trigger a fetch instead of getting wedged
+/// on a stale "Loading…" overlay. Distilled from upstream PRs #311 / #328.
+private let loadingWatchdogSeconds: TimeInterval = 60
+
+/// Wall-clock budget after which an interactive payload (the one the
+/// popover would render right now) is considered stale enough that the
+/// refresh pipeline should be reset proactively rather than rely on the
+/// next 30 s tick to (maybe) recover.
+private let interactiveRefreshResetSeconds: TimeInterval = 120
+
 struct CachedPayload {
     let payload: MenubarPayload
     let fetchedAt: Date
@@ -134,10 +147,90 @@ final class AppStore {
     }
 
     private var inFlightKeys: Set<PayloadCacheKey> = []
+    /// Per-key timestamp at which the most recent refresh attempt began,
+    /// recorded only while the attempt is still in-flight (cleared on
+    /// completion/abort). Feeds the watchdog so a refresh stuck past
+    /// `loadingWatchdogSeconds` can be force-reset without restarting the app.
+    private var loadingStartedAtByKey: [PayloadCacheKey: Date] = [:]
+    /// Keys that have at least been attempted this session. Distinguishes
+    /// "cold first load that just hasn't returned yet" from "we tried,
+    /// failed/cancelled, and now the popover is empty" — the watchdog
+    /// reaches for a fresh attempt in the second case.
+    private var attemptedKeys: Set<PayloadCacheKey> = []
+
+    /// True if any in-flight refresh has been stuck past the watchdog budget.
+    var hasStaleLoading: Bool {
+        let now = Date()
+        return loadingStartedAtByKey.values.contains {
+            now.timeIntervalSince($0) > loadingWatchdogSeconds
+        }
+    }
+
+    /// Maximum age (seconds) of any interactive payload that has crossed the
+    /// stale threshold. The set covers the current key plus the always-warm
+    /// today/all and period-all keys the popover relies on.
+    var staleInteractivePayloadAgeSeconds: Int? {
+        let keys = Set([
+            currentKey,
+            PayloadCacheKey(period: .today, provider: .all),
+            PayloadCacheKey(period: selectedPeriod, provider: .all),
+        ])
+        let ages = keys.compactMap { key -> TimeInterval? in
+            guard let cached = cache[key] else { return nil }
+            let age = Date().timeIntervalSince(cached.fetchedAt)
+            return age > interactiveRefreshResetSeconds ? age : nil
+        }
+        return ages.max().map(Int.init)
+    }
+
+    var hasStaleInteractivePayload: Bool {
+        staleInteractivePayloadAgeSeconds != nil
+    }
+
+    /// True if the popover's current key has nothing cached AND we've never
+    /// even attempted a fetch for it AND we're not currently fetching it.
+    /// That state should be impossible if refresh wiring is sound; the
+    /// watchdog uses it as a trigger to nudge the pipeline.
+    var hasMissingInteractivePayloadWithoutAttempt: Bool {
+        cache[currentKey] == nil &&
+            !inFlightKeys.contains(currentKey) &&
+            !attemptedKeys.contains(currentKey)
+    }
+
+    var shouldResetInteractiveRefreshPipeline: Bool {
+        hasStaleLoading || hasStaleInteractivePayload || hasMissingInteractivePayloadWithoutAttempt
+    }
 
     func resetLoadingState() {
         loadingCount = 0
         inFlightKeys.removeAll()
+        loadingStartedAtByKey.removeAll()
+    }
+
+    /// Watchdog entry point — called periodically from CodeBurnApp. Drops
+    /// loading flags for keys whose refresh attempt is past the watchdog
+    /// budget so the next user action (or tick) can re-trigger a fresh
+    /// fetch instead of wedging on an in-flight set that the runtime
+    /// already abandoned (e.g. after sleep/wake or a network blip).
+    /// Returns true when it actually cleared something.
+    @discardableResult
+    func resetStaleLoadingState() -> Bool {
+        let now = Date()
+        let stale = loadingStartedAtByKey.filter {
+            now.timeIntervalSince($0.value) > loadingWatchdogSeconds
+        }
+        if stale.isEmpty { return false }
+        for (key, _) in stale {
+            loadingStartedAtByKey[key] = nil
+            inFlightKeys.remove(key)
+        }
+        // Approximate adjustment to the legacy counter. We don't track per-key
+        // counts here, but each cleared stale entry corresponds to one
+        // loadingCount++ on its `refresh` entry, so decrement by that many
+        // (floored at 0).
+        loadingCount = max(0, loadingCount - stale.count)
+        NSLog("CodeBurn: watchdog cleared \(stale.count) stale loading key(s)")
+        return true
     }
 
     private func invalidateStaleDayCache() {
@@ -161,6 +254,8 @@ final class AppStore {
         if !force, cache[key]?.isFresh == true { return }
         if !force, inFlightKeys.contains(key) { return }
         inFlightKeys.insert(key)
+        loadingStartedAtByKey[key] = Date()
+        attemptedKeys.insert(key)
         let didShowLoading = showLoading || cache[key] == nil
         if didShowLoading {
             loadingCount += 1
@@ -178,6 +273,7 @@ final class AppStore {
         }
         defer {
             inFlightKeys.remove(key)
+            loadingStartedAtByKey[key] = nil
             if didShowLoading { loadingCount = max(loadingCount - 1, 0) }
         }
         do {
