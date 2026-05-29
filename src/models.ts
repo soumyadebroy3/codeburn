@@ -275,6 +275,15 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'gemini-3-pro':                   'gemini-3-pro-preview',
   'gemini-3.1-flash-image':         'gemini-3.1-flash-image-preview',
   'gemini-3.1-flash-lite':          'gemini-3.1-flash-lite-preview',
+  // Gemini 3.5 Flash thinking variants (upstream PR #377). Resolve to the
+  // canonical id; pricing applies once LiteLLM indexes it (the bundled
+  // snapshot does not yet ship a gemini-3.5-flash entry).
+  'gemini-3.5-flash-high':          'gemini-3.5-flash',
+  'gemini-3.5-flash-medium':        'gemini-3.5-flash',
+  'gemini-3.5-flash-low':           'gemini-3.5-flash',
+  'Gemini 3.5 Flash (High)':        'gemini-3.5-flash',
+  'Gemini 3.5 Flash (Medium)':      'gemini-3.5-flash',
+  'Gemini 3.5 Flash (Low)':         'gemini-3.5-flash',
 }
 
 let userAliases: Record<string, string> = {}
@@ -467,6 +476,7 @@ const SHORT_NAMES: Record<string, string> = {
   'gpt-5': 'GPT-5',
   'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
   'gemini-3-flash-preview': 'Gemini 3 Flash',
+  'gemini-3.5-flash': 'Gemini 3.5 Flash',
   'gemini-2.5-pro': 'Gemini 2.5 Pro',
   'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'kimi-k2-thinking-turbo': 'Kimi K2 Thinking Turbo',

@@ -466,13 +466,18 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
 }
 
 const modelDisplayNames: Record<string, string> = {
+  'gemini-pro-agent': 'Gemini Pro',
   'gemini-3-pro': 'Gemini 3 Pro',
   'gemini-3.1-pro-high': 'Gemini 3.1 Pro',
   'gemini-3.1-pro-low': 'Gemini 3.1 Pro (Low)',
   'gemini-3-flash': 'Gemini 3 Flash',
   'gemini-3-flash-agent': 'Gemini 3 Flash',
+  'gemini-3.5-flash-low': 'Gemini 3.5 Flash',
   'gemini-3.1-flash-image': 'Gemini 3.1 Flash',
   'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
+  'Gemini 3.5 Flash (High)': 'Gemini 3.5 Flash',
+  'Gemini 3.5 Flash (Medium)': 'Gemini 3.5 Flash',
+  'Gemini 3.5 Flash (Low)': 'Gemini 3.5 Flash',
   'claude-opus-4-6-thinking': 'Opus 4.6',
   'claude-sonnet-4-6': 'Sonnet 4.6',
 }

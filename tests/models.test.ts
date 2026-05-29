@@ -363,3 +363,17 @@ describe('DeepSeek v4 models resolve to pricing (upstream PR #367)', () => {
     }
   })
 })
+
+describe('Gemini 3.5 Flash variants resolve to canonical id + display (upstream PR #377)', () => {
+  const variants = ['gemini-3.5-flash-high', 'gemini-3.5-flash-medium', 'gemini-3.5-flash-low', 'Gemini 3.5 Flash (High)']
+
+  for (const variant of variants) {
+    it(`${variant} aliases to gemini-3.5-flash`, () => {
+      // Alias resolution is forward-compatible: pricing applies once LiteLLM
+      // indexes gemini-3.5-flash (the bundled snapshot doesn't yet), but the
+      // canonical resolution and display name are correct now.
+      expect(getModelCosts(variant)).toEqual(getModelCosts('gemini-3.5-flash'))
+      expect(getShortModelName(variant)).toBe('Gemini 3.5 Flash')
+    })
+  }
+})
