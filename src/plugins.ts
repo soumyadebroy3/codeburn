@@ -23,16 +23,19 @@
  *   }
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Provider } from './providers/types.js'
 
 function pluginDir(): string {
+  // resolve() makes the override absolute and collapses any ".." segments so
+  // the $HOME containment check below cannot be defeated by path traversal.
   return process.env.CODEBURN_PLUGIN_DIR
-    ?? join(homedir(), '.config', 'codeburn', 'providers')
+    ? resolve(process.env.CODEBURN_PLUGIN_DIR)
+    : join(homedir(), '.config', 'codeburn', 'providers')
 }
 
 function isProvider(v: unknown): v is Provider {
@@ -64,7 +67,18 @@ export async function loadPlugins(): Promise<PluginLoadResult> {
   // for any other local user. We only load from $HOME-rooted dirs unless
   // CODEBURN_PLUGIN_DIR is explicitly opted into.
   if (process.env.CODEBURN_PLUGIN_DIR) {
-    if (!dir.startsWith(homedir() + sep)) {
+    // Collapse symlinks too: a home-rooted symlink pointing outside $HOME would
+    // otherwise pass a plain string-prefix check. realpathSync is safe here
+    // because existsSync(dir) already returned true above.
+    let real: string, realHome: string
+    try {
+      real = realpathSync(dir)
+      realHome = realpathSync(homedir())
+    } catch {
+      result.errors.push({ path: dir, error: 'CODEBURN_PLUGIN_DIR could not be resolved — refusing to load' })
+      return result
+    }
+    if (real !== realHome && !real.startsWith(realHome + sep)) {
       result.errors.push({
         path: dir,
         error: 'CODEBURN_PLUGIN_DIR points outside $HOME — refusing to load',

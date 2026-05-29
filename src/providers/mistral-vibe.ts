@@ -233,7 +233,8 @@ function extractTools(messages: VibeMessage[]): { tools: string[]; bashCommands:
       const rawName = toolCall.function?.name
       if (!rawName) continue
 
-      const mappedName = toolNameMap[rawName] ?? rawName
+      const lookup = toolNameMap[rawName]
+      const mappedName = typeof lookup === 'string' ? lookup : rawName
       tools.push(mappedName)
       stepTools.push(mappedName)
 

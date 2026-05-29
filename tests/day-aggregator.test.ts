@@ -307,3 +307,49 @@ describe('buildPeriodDataFromDays', () => {
     expect(costDay!.calls).toBe(1)
   })
 })
+
+describe('invalid timestamps (untrusted session data)', () => {
+  it('dateKey returns "" for an unparseable timestamp instead of "NaN-NaN-NaN"', () => {
+    expect(dateKey('not-a-date')).toBe('')
+    expect(dateKey('')).toBe('')
+    expect(dateKey('2026-04-09T10:00:00Z')).toBe('2026-04-09')
+  })
+
+  it('aggregateProjectsIntoDays drops calls with invalid timestamps and never creates a NaN/empty bucket', () => {
+    const projects: ProjectSummary[] = [
+      makeProject({
+        sessions: [{
+          sessionId: 's1',
+          project: 'p',
+          firstTimestamp: 'garbage',
+          lastTimestamp: 'garbage',
+          totalCostUSD: 8,
+          totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0,
+          apiCalls: 2,
+          turns: [
+            {
+              userMessage: 'x', timestamp: 'garbage', sessionId: 's1',
+              category: 'coding', retries: 0, hasEdits: false,
+              assistantCalls: [
+                makeCall('garbage', 3),
+                makeCall('2026-04-10T10:00:00Z', 5),
+              ],
+            },
+          ],
+          modelBreakdown: {}, toolBreakdown: {}, mcpBreakdown: {}, bashBreakdown: {},
+          categoryBreakdown: {} as never,
+          skillBreakdown: {} as never,
+        }],
+      }),
+    ]
+
+    const days = aggregateProjectsIntoDays(projects)
+    // No bucket keyed on a non-date.
+    expect(days.every(d => /^\d{4}-\d{2}-\d{2}$/.test(d.date))).toBe(true)
+    expect(days.some(d => d.date.includes('NaN') || d.date === '')).toBe(false)
+    // The one call with a valid timestamp is still counted.
+    const valid = days.find(d => d.date === '2026-04-10')
+    expect(valid?.cost).toBe(5)
+    expect(valid?.calls).toBe(1)
+  })
+})

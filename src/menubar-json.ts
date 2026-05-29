@@ -143,6 +143,13 @@ export type MenubarPayload = {
   }
 }
 
+// Clamp non-finite values (NaN/Infinity from a malformed session file) to 0
+// so they never reach JSON.stringify, where they serialize to `null` and break
+// the menubar payload contract the Swift/GNOME decoders expect.
+function finite(n: number): number {
+  return Number.isFinite(n) ? n : 0
+}
+
 function oneShotRateFor(editTurns: number, oneShotTurns: number): number | null {
   if (editTurns === 0) return null
   return oneShotTurns / editTurns
@@ -268,12 +275,12 @@ export function buildMenubarPayload(
     ...(valuation ? { valuation } : {}),
     current: {
       label: current.label,
-      cost: current.cost,
-      calls: current.calls,
-      sessions: current.sessions,
+      cost: finite(current.cost),
+      calls: finite(current.calls),
+      sessions: finite(current.sessions),
       oneShotRate: aggregateOneShotRate(current.categories),
-      inputTokens: current.inputTokens,
-      outputTokens: current.outputTokens,
+      inputTokens: finite(current.inputTokens),
+      outputTokens: finite(current.outputTokens),
       cacheHitPercent: cacheHitPercent(current.inputTokens, current.cacheReadTokens),
       topActivities: buildTopActivities(current.categories),
       topModels: buildTopModels(current.models),

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
 import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -18,6 +18,21 @@ const SUPPORTED_OS = 'darwin'
 const MIN_MACOS_MAJOR = 14
 
 export type InstallResult = { installedPath: string; launched: boolean }
+
+/**
+ * Move an app bundle into place. `rename` is atomic but throws EXDEV when the
+ * source and destination are on different filesystems (e.g. a temp staging dir
+ * vs ~/Applications); fall back to a recursive copy-then-remove in that case.
+ */
+export async function moveBundle(src: string, dest: string): Promise<void> {
+  try {
+    await rename(src, dest)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err
+    await cp(src, dest, { recursive: true })
+    await rm(src, { recursive: true, force: true })
+  }
+}
 
 type ReleaseAsset = { name: string; browser_download_url: string }
 type ReleaseResponse = { tag_name: string; assets: ReleaseAsset[] }
@@ -201,12 +216,27 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
 
     await mkdir(appsDir, { recursive: true })
     if (alreadyInstalled) {
-      // Kill the running copy before replacing its bundle so `mv` can proceed cleanly and the
-      // user ends up on the new version.
+      // Kill the running copy before replacing its bundle so the swap can
+      // proceed cleanly and the user ends up on the new version.
       await killRunningApp()
-      await rm(targetPath, { recursive: true, force: true })
     }
-    await rename(unpackedApp, targetPath)
+
+    // Back up the old bundle (same-dir rename, no EXDEV) instead of deleting it
+    // up front, then move the new bundle into place. If the move fails — e.g.
+    // the staging dir is on a different filesystem — restore the backup so the
+    // user is never left with no app at all.
+    const backupPath = alreadyInstalled ? targetPath + '.codeburn-old' : null
+    if (backupPath) {
+      await rm(backupPath, { recursive: true, force: true })
+      await rename(targetPath, backupPath)
+    }
+    try {
+      await moveBundle(unpackedApp, targetPath)
+    } catch (err) {
+      if (backupPath) await rename(backupPath, targetPath).catch(() => {})
+      throw err
+    }
+    if (backupPath) await rm(backupPath, { recursive: true, force: true })
 
     console.log('Launching CodeBurn Menubar...')
     await runCommand('/usr/bin/open', [targetPath])

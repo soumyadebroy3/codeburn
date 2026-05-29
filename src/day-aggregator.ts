@@ -22,12 +22,17 @@ function emptyEntry(date: string): DailyEntry {
 
 export function dateKey(iso: string): string {
   const d = new Date(iso)
+  // Invalid/empty timestamps must not produce a "NaN-NaN-NaN" bucket that
+  // pollutes daily aggregation and the persisted cache. Return '' so callers
+  // can skip it.
+  if (Number.isNaN(d.getTime())) return ''
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntry[] {
   const byDate = new Map<string, DailyEntry>()
-  const ensure = (date: string): DailyEntry => {
+  const ensure = (date: string): DailyEntry | undefined => {
+    if (!date) return undefined
     let d = byDate.get(date)
     if (!d) { d = emptyEntry(date); byDate.set(date, d) }
     return d
@@ -35,31 +40,37 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
 
   for (const project of projects) {
     for (const session of project.sessions) {
-      const sessionDate = dateKey(session.firstTimestamp)
-      ensure(sessionDate).sessions += 1
+      const sessionDay = ensure(dateKey(session.firstTimestamp))
+      if (sessionDay) sessionDay.sessions += 1
 
       for (const turn of session.turns) {
         if (turn.assistantCalls.length === 0) continue
         const turnDate = dateKey(turn.assistantCalls[0]!.timestamp)
         const turnDay = ensure(turnDate)
 
-        const editTurns = turn.hasEdits ? 1 : 0
-        const oneShotTurns = turn.hasEdits && turn.retries === 0 ? 1 : 0
-        const turnCost = turn.assistantCalls.reduce((s, c) => s + c.costUSD, 0)
+        // Turn-level edit/category metrics need a known day. If the turn's
+        // anchor timestamp is invalid we can't attribute them, but the
+        // per-call loop below still buckets each call by its own valid date.
+        if (turnDay) {
+          const editTurns = turn.hasEdits ? 1 : 0
+          const oneShotTurns = turn.hasEdits && turn.retries === 0 ? 1 : 0
+          const turnCost = turn.assistantCalls.reduce((s, c) => s + c.costUSD, 0)
 
-        turnDay.editTurns += editTurns
-        turnDay.oneShotTurns += oneShotTurns
+          turnDay.editTurns += editTurns
+          turnDay.oneShotTurns += oneShotTurns
 
-        const cat = turnDay.categories[turn.category] ?? { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 }
-        cat.turns += 1
-        cat.cost += turnCost
-        cat.editTurns += editTurns
-        cat.oneShotTurns += oneShotTurns
-        turnDay.categories[turn.category] = cat
+          const cat = turnDay.categories[turn.category] ?? { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 }
+          cat.turns += 1
+          cat.cost += turnCost
+          cat.editTurns += editTurns
+          cat.oneShotTurns += oneShotTurns
+          turnDay.categories[turn.category] = cat
+        }
 
         for (const call of turn.assistantCalls) {
           const callDate = dateKey(call.timestamp)
           const callDay = ensure(callDate)
+          if (!callDay) continue
 
           callDay.cost += call.costUSD
           callDay.calls += 1

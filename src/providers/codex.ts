@@ -312,11 +312,26 @@ function extractTurnTokens(state: CodexParserState, info: NonNullable<CodexEntry
   }
   const total = info.total_token_usage
   if (!total) return null
+  const curInput = total.input_tokens ?? 0
+  const curCached = total.cached_input_tokens ?? 0
+  const curOutput = total.output_tokens ?? 0
+  const curReasoning = total.reasoning_output_tokens ?? 0
+  const inputDelta = curInput - state.prevInput
+  const cachedDelta = curCached - state.prevCached
+  const outputDelta = curOutput - state.prevOutput
+  const reasoningDelta = curReasoning - state.prevReasoning
+  // A negative delta means the cumulative counter dropped — i.e. the session
+  // reset. Emitting the negative delta would corrupt aggregate totals, so
+  // treat the new cumulative as a fresh window. advancePrevCounters() then
+  // resyncs prev* to the new (lower) cumulative for subsequent events.
+  if (inputDelta < 0 || cachedDelta < 0 || outputDelta < 0 || reasoningDelta < 0) {
+    return { inputTokens: curInput, cachedInputTokens: curCached, outputTokens: curOutput, reasoningTokens: curReasoning }
+  }
   return {
-    inputTokens: (total.input_tokens ?? 0) - state.prevInput,
-    cachedInputTokens: (total.cached_input_tokens ?? 0) - state.prevCached,
-    outputTokens: (total.output_tokens ?? 0) - state.prevOutput,
-    reasoningTokens: (total.reasoning_output_tokens ?? 0) - state.prevReasoning,
+    inputTokens: inputDelta,
+    cachedInputTokens: cachedDelta,
+    outputTokens: outputDelta,
+    reasoningTokens: reasoningDelta,
   }
 }
 

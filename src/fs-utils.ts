@@ -156,6 +156,11 @@ export async function* readSessionLines(filePath: string): AsyncGenerator<string
     }
   } catch (err) {
     warn(`stream read failed for ${filePath}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+    // Re-throw so callers can distinguish a mid-stream read failure from a
+    // clean EOF. Swallowing it makes a truncated read look "complete", which
+    // lets partial data get cached against the file fingerprint and pin the
+    // corruption (the stat-failure early-return above is the "no data" case).
+    throw err
   } finally {
     stream.destroy()
   }

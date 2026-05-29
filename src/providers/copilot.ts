@@ -94,8 +94,9 @@ function parseLegacyEvents(content: string, sessionId: string, seenKeys: Set<str
       continue
     }
 
-    // Some newer events include the model ID explicitly.
-    const data = event.data as { newModel?: string; model?: string }
+    // Some newer events include the model ID explicitly. `data` is untrusted:
+    // a JSON-valid line can omit it entirely, so coerce a missing value to {}.
+    const data = (event.data ?? {}) as { newModel?: string; model?: string }
     if (typeof data.model === 'string' && data.model) {
       currentModel = data.model
     }
@@ -106,13 +107,14 @@ function parseLegacyEvents(content: string, sessionId: string, seenKeys: Set<str
     }
 
     if (event.type === 'user.message') {
-      pendingUserMessage = event.data.content ?? ''
+      pendingUserMessage = event.data?.content ?? ''
       continue
     }
 
     if (event.type === 'assistant.message') {
-      const { messageId, outputTokens, toolRequests: rawToolRequests } = event.data
-      if (outputTokens === 0) continue
+      const { messageId, outputTokens, toolRequests: rawToolRequests } =
+        (event.data ?? {}) as { messageId?: string; outputTokens?: number; toolRequests?: unknown }
+      if (!outputTokens) continue
       if (!currentModel) continue
 
       const dedupKey = `copilot:${sessionId}:${messageId}`
@@ -188,14 +190,15 @@ function inferModelFromToolCallIds(events: TranscriptEvent[]): string {
 
   for (const e of events) {
     // Some newer events (like tool.execution_complete) explicitly include the model ID.
-    const data = e.data as { model?: string }
+    // `data` is untrusted and may be absent on a valid-JSON line; coerce to {}.
+    const data = (e.data ?? {}) as { model?: string }
     if (typeof data.model === 'string' && data.model) {
       modelCounts.set(data.model, (modelCounts.get(data.model) ?? 0) + 100)
     }
 
     if (e.type !== 'assistant.message') continue
-    const msg = e as { data: { toolRequests?: TranscriptToolRequest[] } }
-    for (const t of msg.data.toolRequests ?? []) {
+    const msg = e as { data?: { toolRequests?: TranscriptToolRequest[] } }
+    for (const t of msg.data?.toolRequests ?? []) {
       const toolCallId = t.toolCallId ?? ''
       for (const hint of transcriptToolCallModelHints) {
         if (!toolCallId.startsWith(hint.prefix)) continue

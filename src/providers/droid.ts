@@ -326,6 +326,10 @@ async function readFirstJsonlLine(filePath: string): Promise<string | null> {
   try {
     const first = await it.next()
     return first.done ? null : first.value
+  } catch {
+    // Discovery must stay resilient: a read error on the first line just means
+    // "no usable session here", not a reason to abort the directory scan.
+    return null
   } finally {
     if (typeof it.return === 'function') await it.return(undefined)
   }

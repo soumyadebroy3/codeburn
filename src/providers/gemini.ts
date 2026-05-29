@@ -215,7 +215,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       // Try single JSON first (Gemini CLI <=0.38), then JSONL (>=0.39)
       try {
         const parsed = JSON.parse(raw)
-        if (parsed.messages && parsed.sessionId) {
+        if (Array.isArray(parsed?.messages) && parsed.sessionId) {
           data = parsed
         }
       } catch { /* not single JSON */ }
@@ -224,7 +224,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         data = parseJsonl(raw)
       }
 
-      if (!data?.messages || !data.sessionId) return
+      if (!Array.isArray(data?.messages) || !data.sessionId) return
 
       const calls = parseSession(data, seenKeys)
       for (const call of calls) {
