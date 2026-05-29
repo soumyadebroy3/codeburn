@@ -258,3 +258,30 @@ describe('unknown model warnings', () => {
     expect(cost).toBe(0)
   })
 })
+
+describe('Warp Claude variants resolve to pricing (upstream PR #378)', () => {
+  const cases: Array<[string, string]> = [
+    ['claude-4-6-sonnet-high', 'claude-sonnet-4-6'],
+    ['claude-4-6-sonnet-low', 'claude-sonnet-4-6'],
+    ['claude-4-6-sonnet-medium', 'claude-sonnet-4-6'],
+    ['claude-4-6-sonnet-high-fast', 'claude-sonnet-4-6'],
+    ['claude-4-7-opus-xhigh', 'claude-opus-4-7'],
+    ['claude-4-7-opus-xhigh-fast', 'claude-opus-4-7'],
+  ]
+
+  for (const [input, expectedAlias] of cases) {
+    it(`${input} resolves to ${expectedAlias} pricing`, () => {
+      const costs = getModelCosts(input)
+      expect(costs).not.toBeNull()
+      expect(costs!.inputCostPerToken).toBeGreaterThan(0)
+      const expected = getModelCosts(expectedAlias)
+      expect(expected).not.toBeNull()
+      expect(costs!.inputCostPerToken).toBe(expected!.inputCostPerToken)
+      expect(costs!.outputCostPerToken).toBe(expected!.outputCostPerToken)
+    })
+
+    it(`${input} calculates non-zero cost`, () => {
+      expect(calculateCost(input, 1000, 200, 0, 0, 0)).toBeGreaterThan(0)
+    })
+  }
+})

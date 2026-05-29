@@ -36,6 +36,8 @@ const LAZY_PROVIDERS: readonly LazyProviderSpec[] = [
   { name: 'opencode',     load: () => import('./opencode.js'),     exportName: 'opencode' },
   { name: 'cursor-agent', load: () => import('./cursor-agent.js'), exportName: 'cursor_agent' },
   { name: 'crush',        load: () => import('./crush.js'),        exportName: 'crush' },
+  { name: 'forge',        load: () => import('./forge.js'),        exportName: 'forge' },
+  { name: 'warp',         load: () => import('./warp.js'),         exportName: 'warp' },
 ]
 
 const lazyCache = new Map<string, Provider | null>()

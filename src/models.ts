@@ -216,6 +216,14 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'claude-opus-4.7':               'claude-opus-4-7',
   'claude-opus-4.6':               'claude-opus-4-6',
   'claude-opus-4.5':               'claude-opus-4-5',
+  // Warp emits Claude variants with tier/reasoning suffixes LiteLLM doesn't
+  // index; map them to canonical pricing IDs (upstream PR #378).
+  'claude-4-6-sonnet-high':        'claude-sonnet-4-6',
+  'claude-4-6-sonnet-low':         'claude-sonnet-4-6',
+  'claude-4-6-sonnet-medium':      'claude-sonnet-4-6',
+  'claude-4-6-sonnet-high-fast':   'claude-sonnet-4-6',
+  'claude-4-7-opus-xhigh':         'claude-opus-4-7',
+  'claude-4-7-opus-xhigh-fast':    'claude-opus-4-7',
   'cursor-auto':                    'claude-sonnet-4-5',
   'cursor-agent-auto':             'claude-sonnet-4-5',
   'copilot-auto':                  'claude-sonnet-4-5',
