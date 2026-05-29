@@ -246,7 +246,7 @@ function handleUserMessage(state: CodexParserState, entry: CodexEntry): void {
     .filter(c => c.type === 'input_text')
     .map(c => c.text ?? '')
     .filter(Boolean)
-  if (texts.length > 0) state.pendingUserMessage = texts.join(' ')
+  if (texts.length > 0) state.pendingUserMessage = texts.join(' ').slice(0, 500)
 }
 
 function handleAssistantMessage(state: CodexParserState, entry: CodexEntry): void {

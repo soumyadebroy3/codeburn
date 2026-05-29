@@ -1,4 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
+import { readSessionFile } from '../fs-utils.js'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -203,12 +204,10 @@ function parseJsonl(raw: string): GeminiSession | null {
 function createParser(source: SessionSource, seenKeys: Set<string>): SessionParser {
   return {
     async *parse(): AsyncGenerator<ParsedProviderCall> {
-      let raw: string
-      try {
-        raw = await readFile(source.path, 'utf-8')
-      } catch {
-        return
-      }
+      // readSessionFile applies the shared size cap + UTF-8 hardening, guarding
+      // against oversize/corrupt session files (upstream PR #362).
+      const raw = await readSessionFile(source.path)
+      if (raw === null) return
 
       let data: GeminiSession | null = null
 
