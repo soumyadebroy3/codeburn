@@ -475,4 +475,33 @@ describe('codex provider - JSONL parsing', () => {
     expect(calls[0]!.tools).toContain('Edit')
     expect(calls[0]!.model).toBe('gpt-5.5')
   })
+
+  it('skips token_count events a forked session replays from its parent (upstream #372)', async () => {
+    const forkMeta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-04-14T10:00:00Z',
+      payload: {
+        cwd: '/Users/test/myproject', originator: 'codex-cli',
+        session_id: 'fork-1', forked_from_id: 'parent-1', model: 'gpt-5.3-codex',
+      },
+    })
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-fork.jsonl', [
+      forkMeta,
+      // Parent history replayed at fork-creation time (within 5s) → skipped.
+      tokenCount({ timestamp: '2026-04-14T10:00:01Z', total: { input: 1000, output: 500 } }),
+      tokenCount({ timestamp: '2026-04-14T10:00:02Z', total: { input: 2000, output: 800 } }),
+      // Genuine post-fork activity past the cutoff → counted.
+      tokenCount({ timestamp: '2026-04-14T10:01:00Z', total: { input: 2500, output: 1000 } }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) {
+      calls.push(call)
+    }
+    // Without the fork-replay skip this would be 3 calls (double-counting).
+    expect(calls).toHaveLength(1)
+  })
 })

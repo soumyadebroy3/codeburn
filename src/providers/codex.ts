@@ -44,6 +44,7 @@ type CodexEntry = {
     model_provider?: string
     originator?: string
     session_id?: string
+    forked_from_id?: string
     model?: string
     name?: string
     content?: Array<{ type?: string; text?: string }>
@@ -190,6 +191,8 @@ function resolveModel(info: CodexEntry['payload'], sessionModel?: string): strin
 type CodexParserState = {
   sessionModel?: string
   sessionId: string
+  forkedFromId: string
+  forkCutoff: string
   prevCumulativeTotal: number | null
   prevInput: number
   prevCached: number
@@ -205,6 +208,8 @@ type CodexParserState = {
 function newCodexParserState(): CodexParserState {
   return {
     sessionId: '',
+    forkedFromId: '',
+    forkCutoff: '',
     prevCumulativeTotal: null,
     prevInput: 0,
     prevCached: 0,
@@ -226,6 +231,13 @@ function clearPending(state: CodexParserState): void {
 
 function handleSessionMeta(state: CodexParserState, entry: CodexEntry, fallbackId: string): void {
   state.sessionId = entry.payload?.session_id ?? fallbackId
+  state.forkedFromId = entry.payload?.forked_from_id ?? ''
+  // Forked sessions replay the parent's entire event history with timestamps
+  // clustered at the fork-creation time; record a cutoff so the replayed
+  // token_count events can be skipped (upstream PR #372).
+  if (state.forkedFromId && entry.timestamp) {
+    state.forkCutoff = new Date(new Date(entry.timestamp).getTime() + 5000).toISOString()
+  }
   state.sessionModel = entry.payload?.model ?? state.sessionModel
 }
 
@@ -349,6 +361,8 @@ function advancePrevCounters(state: CodexParserState, info: NonNullable<CodexEnt
 }
 
 function handleTokenCount(state: CodexParserState, entry: CodexEntry, seenKeys: Set<string>): void {
+  // Skip the parent history a forked session replays within 5s of the fork.
+  if (state.forkCutoff && entry.timestamp && entry.timestamp < state.forkCutoff) return
   const info = entry.payload?.info
   if (!info) {
     handleTokenCountEstimated(state, entry, seenKeys)
@@ -374,7 +388,9 @@ function handleTokenCount(state: CodexParserState, entry: CodexEntry, seenKeys: 
   const uncachedInputTokens = Math.max(0, tokens.inputTokens - tokens.cachedInputTokens)
   const model = resolveModel(entry.payload, state.sessionModel)
   const timestamp = entry.timestamp ?? ''
-  const dedupKey = `codex:${state.sessionId}:${timestamp}:${cumulativeTotal}`
+  // Key by the fork's origin id (when present) so a forked session dedups
+  // against its parent's tokens; drop the timestamp so replays collapse.
+  const dedupKey = `codex:${state.forkedFromId || state.sessionId}:${cumulativeTotal}`
 
   if (seenKeys.has(dedupKey)) return
   seenKeys.add(dedupKey)
