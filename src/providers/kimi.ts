@@ -232,7 +232,10 @@ function extractTool(payload: JsonObject): { tool: string; bashCommands: string[
   const rawName = stringField(fn, 'name') ?? stringField(payload, 'name')
   if (!rawName) return null
 
-  const tool = toolNameMap[rawName] ?? rawName
+  // Prototype-safe: toolNameMap['__proto__'] resolves to a non-string inherited
+  // member, so only accept a real string mapping (else keep the raw name).
+  const mappedTool = toolNameMap[rawName]
+  const tool = typeof mappedTool === 'string' ? mappedTool : rawName
   const argsText = stringField(fn, 'arguments') ?? stringField(payload, 'arguments')
   const args = parseJsonObject(argsText)
   const command = stringField(args, 'command')

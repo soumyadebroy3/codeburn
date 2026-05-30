@@ -72,11 +72,15 @@ function getOpenClawDirs(): string[] {
 function extractTools(content: Array<{ type?: string; name?: string; arguments?: Record<string, unknown> }> | undefined): { tools: string[]; bashCommands: string[] } {
   const tools: string[] = []
   const bashCommands: string[] = []
-  if (!content) return { tools, bashCommands }
+  // `content` is untrusted; a truthy non-array would throw on iteration.
+  if (!Array.isArray(content)) return { tools, bashCommands }
 
   for (const block of content) {
-    if ((block.type === 'tool_use' || block.type === 'toolCall') && block.name) {
-      const mapped = toolNameMap[block.name] ?? block.name
+    if (block && (block.type === 'tool_use' || block.type === 'toolCall') && block.name) {
+      // Prototype-safe lookup: toolNameMap['__proto__'] resolves to a non-string
+      // inherited member, so only accept a real string mapping.
+      const lookup = toolNameMap[block.name]
+      const mapped = typeof lookup === 'string' ? lookup : block.name
       tools.push(mapped)
       if (mapped === 'Bash' && block.arguments && typeof block.arguments.command === 'string') {
         bashCommands.push(...extractBashCommands(block.arguments.command))
@@ -171,10 +175,15 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         seenKeys.add(dedupKey)
 
         const u = call.usage
-        const costFromProvider = u.cost?.total ?? 0
+        // Token fields are untrusted: coerce to finite, non-negative integers
+        // so a string/negative/NaN value cannot corrupt aggregate token totals.
+        const safe = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0)
+        const safeCost = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0)
+        const uInput = safe(u.input), uOutput = safe(u.output), uCacheWrite = safe(u.cacheWrite), uCacheRead = safe(u.cacheRead)
+        const costFromProvider = safeCost(u.cost?.total)
         const costUSD = costFromProvider > 0
           ? costFromProvider
-          : calculateCost(call.model, u.input, u.output, u.cacheWrite, u.cacheRead, 0)
+          : calculateCost(call.model, uInput, uOutput, uCacheWrite, uCacheRead, 0)
 
         const ts = new Date(call.timestamp)
         if (isNaN(ts.getTime()) || ts.getTime() < 1_000_000_000_000) continue
@@ -182,11 +191,11 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         yield {
           provider: 'openclaw',
           model: call.model || 'openclaw-auto',
-          inputTokens: u.input,
-          outputTokens: u.output,
-          cacheCreationInputTokens: u.cacheWrite,
-          cacheReadInputTokens: u.cacheRead,
-          cachedInputTokens: u.cacheRead,
+          inputTokens: uInput,
+          outputTokens: uOutput,
+          cacheCreationInputTokens: uCacheWrite,
+          cacheReadInputTokens: uCacheRead,
+          cachedInputTokens: uCacheRead,
           reasoningTokens: 0,
           webSearchRequests: 0,
           costUSD,

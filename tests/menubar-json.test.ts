@@ -231,4 +231,30 @@ describe('buildMenubarPayload', () => {
     const payload = buildMenubarPayload(emptyPeriod('Today'), providers, null)
     expect(payload.current.providers).toEqual({ claude: 76.45 })
   })
+
+  it('clamps non-finite metrics to 0 so the JSON contract never emits null', () => {
+    const period: PeriodData = {
+      label: 'Today',
+      cost: Infinity,
+      calls: NaN,
+      sessions: -Infinity,
+      inputTokens: NaN,
+      outputTokens: Infinity,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      categories: [],
+      models: [],
+    }
+    const payload = buildMenubarPayload(period, [], null)
+    expect(payload.current.cost).toBe(0)
+    expect(payload.current.calls).toBe(0)
+    expect(payload.current.sessions).toBe(0)
+    expect(payload.current.inputTokens).toBe(0)
+    expect(payload.current.outputTokens).toBe(0)
+    // JSON.stringify turns NaN/Infinity into null; assert the contract holds.
+    const json = JSON.stringify(payload)
+    expect(json).not.toContain('"cost":null')
+    expect(json).not.toContain('"inputTokens":null')
+    expect(JSON.parse(json).current.cost).toBe(0)
+  })
 })

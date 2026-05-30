@@ -260,18 +260,26 @@ function dailyTimeline(daily: DailyHistoryEntry[], spikes: SpikeFinding[]): stri
   const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
   const filled: DailyHistoryEntry[] = []
   if (sorted.length > 0) {
-    const start = new Date(sorted[0].date + 'T00:00:00Z')
-    const end = new Date(sorted.at(-1)!.date + 'T00:00:00Z')
-    const byDate = new Map(sorted.map(d => [d.date, d]))
-    for (let t = start.getTime(); t <= end.getTime(); t += 86_400_000) {
-      const iso = new Date(t).toISOString().slice(0, 10)
-      const found = byDate.get(iso)
-      if (found) filled.push(found)
-      else filled.push({
-        date: iso, cost: 0, calls: 0,
-        inputTokens: 0, outputTokens: 0,
-        cacheReadTokens: 0, cacheWriteTokens: 0, topModels: [],
-      })
+    const startMs = new Date(sorted[0].date + 'T00:00:00Z').getTime()
+    const endMs = new Date(sorted.at(-1)!.date + 'T00:00:00Z').getTime()
+    // Bound the calendar-fill span. The dates come from untrusted session
+    // files; a single out-of-range timestamp would otherwise expand this loop
+    // to millions of iterations and hang/crash the export. Clamp the look-back
+    // and skip the fill entirely if either endpoint is unparseable.
+    const MAX_DAYS = 800
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+      const start = Math.max(startMs, endMs - MAX_DAYS * 86_400_000)
+      const byDate = new Map(sorted.map(d => [d.date, d]))
+      for (let t = start; t <= endMs; t += 86_400_000) {
+        const iso = new Date(t).toISOString().slice(0, 10)
+        const found = byDate.get(iso)
+        if (found) filled.push(found)
+        else filled.push({
+          date: iso, cost: 0, calls: 0,
+          inputTokens: 0, outputTokens: 0,
+          cacheReadTokens: 0, cacheWriteTokens: 0, topModels: [],
+        })
+      }
     }
   }
   const series = filled.length > 0 ? filled : sorted

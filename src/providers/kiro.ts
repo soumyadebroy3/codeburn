@@ -72,14 +72,22 @@ function extractToolNames(content: string): string[] {
   let match
   while ((match = regex.exec(content)) !== null) {
     const name = match[1]!.trim()
-    tools.push(toolNameMap[name] ?? name)
+    const lookup = toolNameMap[name]
+    tools.push(typeof lookup === 'string' ? lookup : name)
   }
   return tools
 }
 
 function parseChatFile(data: KiroChatFile, sessionId: string, project: string, seenKeys: Set<string>): ParsedProviderCall[] {
   const results: ParsedProviderCall[] = []
-  const { chat, metadata } = data
+  const { metadata } = data
+  // `chat` is untrusted: the declared KiroChatMessage[] type is no runtime
+  // guarantee. A non-array (object/string) would throw on iteration/.filter,
+  // and a non-string `content` would throw on .startsWith/.slice/.length.
+  const chat = (Array.isArray(data.chat) ? data.chat : []).map(m => ({
+    ...m,
+    content: typeof m?.content === 'string' ? m.content : '',
+  }))
 
   let modelId = normalizeModelId(metadata.modelId ?? '')
   if (modelId === 'auto' || !modelId) modelId = 'kiro-auto'

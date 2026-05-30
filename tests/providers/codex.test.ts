@@ -278,6 +278,35 @@ describe('codex provider - JSONL parsing', () => {
     expect(call.deduplicationKey).toContain('codex:')
   })
 
+  it('never emits negative tokens when the cumulative counter resets (delta fallback)', async () => {
+    // Cumulative-only events (no last_token_usage) exercise the delta path.
+    // A second event whose cumulative total is LOWER than the first signals a
+    // session/counter reset; the delta would go negative and corrupt totals.
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-reset.jsonl', [
+      sessionMeta({ session_id: 'sess-reset', model: 'gpt-5.3-codex' }),
+      tokenCount({ timestamp: '2026-04-14T10:01:00Z', total: { input: 1000, output: 500 } }),
+      // Reset: cumulative drops well below the previously-tracked totals.
+      tokenCount({ timestamp: '2026-04-14T10:05:00Z', total: { input: 200, output: 100 } }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) calls.push(call)
+
+    expect(calls).toHaveLength(2)
+    for (const c of calls) {
+      expect(c.inputTokens).toBeGreaterThanOrEqual(0)
+      expect(c.outputTokens).toBeGreaterThanOrEqual(0)
+      expect(c.cacheReadInputTokens).toBeGreaterThanOrEqual(0)
+      expect(c.reasoningTokens).toBeGreaterThanOrEqual(0)
+    }
+    // The reset turn is attributed the new cumulative window, not a negative delta.
+    expect(calls[1]!.inputTokens).toBe(200)
+    expect(calls[1]!.outputTokens).toBe(100)
+  })
+
   it('skips duplicate token_count events', async () => {
     const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-dedup.jsonl', [
       sessionMeta(),
@@ -445,5 +474,34 @@ describe('codex provider - JSONL parsing', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]!.tools).toContain('Edit')
     expect(calls[0]!.model).toBe('gpt-5.5')
+  })
+
+  it('skips token_count events a forked session replays from its parent (upstream #372)', async () => {
+    const forkMeta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-04-14T10:00:00Z',
+      payload: {
+        cwd: '/Users/test/myproject', originator: 'codex-cli',
+        session_id: 'fork-1', forked_from_id: 'parent-1', model: 'gpt-5.3-codex',
+      },
+    })
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-fork.jsonl', [
+      forkMeta,
+      // Parent history replayed at fork-creation time (within 5s) → skipped.
+      tokenCount({ timestamp: '2026-04-14T10:00:01Z', total: { input: 1000, output: 500 } }),
+      tokenCount({ timestamp: '2026-04-14T10:00:02Z', total: { input: 2000, output: 800 } }),
+      // Genuine post-fork activity past the cutoff → counted.
+      tokenCount({ timestamp: '2026-04-14T10:01:00Z', total: { input: 2500, output: 1000 } }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) {
+      calls.push(call)
+    }
+    // Without the fork-replay skip this would be 3 calls (double-counting).
+    expect(calls).toHaveLength(1)
   })
 })

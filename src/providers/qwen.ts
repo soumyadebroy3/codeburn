@@ -64,7 +64,8 @@ function extractTools(parts: QwenPart[]): { tools: string[]; bashCommands: strin
 
   for (const part of parts) {
     if (part.functionCall?.name) {
-      const mapped = toolNameMap[part.functionCall.name] ?? part.functionCall.name
+      const lookup = toolNameMap[part.functionCall.name]
+      const mapped = typeof lookup === 'string' ? lookup : part.functionCall.name
       tools.push(mapped)
       if (mapped === 'Bash' && part.functionCall.args && typeof part.functionCall.args['command'] === 'string') {
         bashCommands.push(...extractBashCommands(part.functionCall.args['command'] as string))
@@ -93,7 +94,10 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         }
 
         if (entry.type === 'user' && entry.message) {
-          const texts = (entry.message.parts ?? [])
+          // `parts` is untrusted; `?? []` only covers null/undefined, so a
+          // truthy non-array would throw on .filter. Guard with Array.isArray.
+          const parts = Array.isArray(entry.message.parts) ? entry.message.parts : []
+          const texts = parts
             .filter(p => p.text && !p.thought)
             .map(p => p.text!)
           if (texts.length > 0) {
@@ -112,7 +116,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         seenKeys.add(dedupKey)
 
         const model = entry.model || 'qwen-auto'
-        const { tools, bashCommands } = extractTools(entry.message?.parts ?? [])
+        const { tools, bashCommands } = extractTools(Array.isArray(entry.message?.parts) ? entry.message!.parts : [])
 
         const inputTokens = usage.promptTokenCount
         const outputTokens = usage.candidatesTokenCount

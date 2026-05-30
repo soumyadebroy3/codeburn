@@ -80,6 +80,7 @@ function getSortedPricingKeys(): string[] {
 }
 
 function getCacheDir(): string {
+  if (process.env['CODEBURN_CACHE_DIR']) return process.env['CODEBURN_CACHE_DIR']
   return join(homedir(), '.cache', 'codeburn')
 }
 
@@ -185,16 +186,26 @@ async function loadCachedPricing(): Promise<Map<string, ModelCosts> | null> {
   }
 }
 
+function mergeSnapshotFallbacks(pricing: Map<string, ModelCosts>): Map<string, ModelCosts> {
+  // The runtime LiteLLM cache can be stale or incomplete; fill any gaps from
+  // the bundled snapshot so models we ship pricing for never read as $0
+  // (upstream PR #367).
+  for (const [name, costs] of loadSnapshot()) {
+    if (!pricing.has(name)) pricing.set(name, costs)
+  }
+  return pricing
+}
+
 export async function loadPricing(): Promise<void> {
   const cached = await loadCachedPricing()
   if (cached) {
-    pricingCache = cached
+    pricingCache = mergeSnapshotFallbacks(cached)
     sortedPricingKeys = null
     return
   }
 
   try {
-    pricingCache = await fetchAndCachePricing()
+    pricingCache = mergeSnapshotFallbacks(await fetchAndCachePricing())
     sortedPricingKeys = null
   } catch {
     // snapshot already loaded at init; nothing more to do
@@ -216,6 +227,14 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'claude-opus-4.7':               'claude-opus-4-7',
   'claude-opus-4.6':               'claude-opus-4-6',
   'claude-opus-4.5':               'claude-opus-4-5',
+  // Warp emits Claude variants with tier/reasoning suffixes LiteLLM doesn't
+  // index; map them to canonical pricing IDs (upstream PR #378).
+  'claude-4-6-sonnet-high':        'claude-sonnet-4-6',
+  'claude-4-6-sonnet-low':         'claude-sonnet-4-6',
+  'claude-4-6-sonnet-medium':      'claude-sonnet-4-6',
+  'claude-4-6-sonnet-high-fast':   'claude-sonnet-4-6',
+  'claude-4-7-opus-xhigh':         'claude-opus-4-7',
+  'claude-4-7-opus-xhigh-fast':    'claude-opus-4-7',
   'cursor-auto':                    'claude-sonnet-4-5',
   'cursor-agent-auto':             'claude-sonnet-4-5',
   'copilot-auto':                  'claude-sonnet-4-5',
@@ -256,6 +275,15 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'gemini-3-pro':                   'gemini-3-pro-preview',
   'gemini-3.1-flash-image':         'gemini-3.1-flash-image-preview',
   'gemini-3.1-flash-lite':          'gemini-3.1-flash-lite-preview',
+  // Gemini 3.5 Flash thinking variants (upstream PR #377). Resolve to the
+  // canonical id; pricing applies once LiteLLM indexes it (the bundled
+  // snapshot does not yet ship a gemini-3.5-flash entry).
+  'gemini-3.5-flash-high':          'gemini-3.5-flash',
+  'gemini-3.5-flash-medium':        'gemini-3.5-flash',
+  'gemini-3.5-flash-low':           'gemini-3.5-flash',
+  'Gemini 3.5 Flash (High)':        'gemini-3.5-flash',
+  'Gemini 3.5 Flash (Medium)':      'gemini-3.5-flash',
+  'Gemini 3.5 Flash (Low)':         'gemini-3.5-flash',
 }
 
 let userAliases: Record<string, string> = {}
@@ -448,6 +476,7 @@ const SHORT_NAMES: Record<string, string> = {
   'gpt-5': 'GPT-5',
   'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
   'gemini-3-flash-preview': 'Gemini 3 Flash',
+  'gemini-3.5-flash': 'Gemini 3.5 Flash',
   'gemini-2.5-pro': 'Gemini 2.5 Pro',
   'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'kimi-k2-thinking-turbo': 'Kimi K2 Thinking Turbo',
@@ -461,6 +490,8 @@ const SHORT_NAMES: Record<string, string> = {
   'kimi-k2': 'Kimi K2',
   'kimi-latest': 'Kimi Latest',
   'moonshot-v1': 'Moonshot v1',
+  'deepseek-v4-pro': 'DeepSeek v4 Pro',
+  'deepseek-v4-flash': 'DeepSeek v4 Flash',
   'deepseek-coder-max': 'DeepSeek Coder Max',
   'deepseek-coder': 'DeepSeek Coder',
   'deepseek-r1': 'DeepSeek R1',

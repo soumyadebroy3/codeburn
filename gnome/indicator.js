@@ -74,7 +74,6 @@ const PROVIDER_PATHS = {
   cursor: '.config/Cursor/User/globalStorage/state.vscdb',
   'cursor-agent': '.cursor/projects',
   copilot: '.copilot/session-state',
-<<<<<<< HEAD
   gemini: '.gemini/tmp',
   antigravity: '.gemini/antigravity/conversations',
   kiro: '.config/Kiro/User/globalStorage/kiro.kiroagent',
@@ -83,9 +82,7 @@ const PROVIDER_PATHS = {
   'roo-code': '.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks',
   'kilo-code': '.config/Code/User/globalStorage/kilocode.kilo-code/tasks',
   qwen: '.qwen/projects',
-=======
   kimi: '.kimi/sessions',
->>>>>>> 78cbfd3 (Add Kimi provider)
   pi: '.pi/agent/sessions',
   omp: '.omp/agent/sessions',
   droid: '.factory/projects',

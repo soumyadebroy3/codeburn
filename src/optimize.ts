@@ -309,7 +309,8 @@ export async function scanJsonlFile(
     const msg = entry.message as Record<string, unknown> | undefined
     const usage = msg?.usage as Record<string, unknown> | undefined
     if (usage) {
-      const cacheCreate = (usage.cache_creation_input_tokens as number) ?? 0
+      const rawCacheCreate = usage.cache_creation_input_tokens
+      const cacheCreate = typeof rawCacheCreate === 'number' && Number.isFinite(rawCacheCreate) && rawCacheCreate > 0 ? rawCacheCreate : 0
       if (cacheCreate > 0) apiCalls.push({ cacheCreationTokens: cacheCreate, version: lastVersion, recent })
     }
 
@@ -317,6 +318,9 @@ export async function scanJsonlFile(
     if (!Array.isArray(blocks)) continue
 
     for (const block of blocks) {
+      // content[] elements are untrusted: a `null` or primitive element is
+      // valid JSON and would throw on `.type`. Guard like the user branch above.
+      if (!block || typeof block !== 'object') continue
       if (block.type !== 'tool_use') continue
       calls.push({
         name: block.name as string,
@@ -348,11 +352,16 @@ async function scanSessions(dateRange?: DateRange): Promise<ScanData> {
   }
 
   await runWithConcurrency(tasks, FILE_READ_CONCURRENCY, async ({ file, project }) => {
-    const { calls, cwds, apiCalls, userMessages } = await scanJsonlFile(file, project, dateRange)
-    allCalls.push(...calls)
-    for (const cwd of cwds) allCwds.add(cwd)
-    allApiCalls.push(...apiCalls)
-    allUserMessages.push(...userMessages)
+    try {
+      const { calls, cwds, apiCalls, userMessages } = await scanJsonlFile(file, project, dateRange)
+      allCalls.push(...calls)
+      for (const cwd of cwds) allCwds.add(cwd)
+      allApiCalls.push(...apiCalls)
+      allUserMessages.push(...userMessages)
+    } catch {
+      // One corrupt or hostile session file must not abort the entire optimize
+      // scan. Skip the bad file and continue with the rest of the history.
+    }
   })
 
   return { toolCalls: allCalls, projectCwds: allCwds, apiCalls: allApiCalls, userMessages: allUserMessages }

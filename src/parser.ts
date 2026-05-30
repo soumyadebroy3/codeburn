@@ -235,27 +235,30 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
   // breakdown is present, use it directly. When it isn't (older sessions),
   // fall back to treating the legacy total as 5m so downstream pricing stays
   // consistent with what codeburn used to do — same money, just attributed.
+  // Token fields are declared as numbers but come from untrusted session JSONL.
+  // Route every count through positiveNumber so a string/negative/NaN value
+  // becomes 0 instead of corrupting aggregate totals (e.g. "5" string-concat).
   const cw1h = usage.cache_creation?.ephemeral_1h_input_tokens
   const cw5m = usage.cache_creation?.ephemeral_5m_input_tokens
-  const cwTotalLegacy = usage.cache_creation_input_tokens ?? 0
+  const cwTotalLegacy = positiveNumber(usage.cache_creation_input_tokens)
   const has1h = typeof cw1h === 'number'
   const has5m = typeof cw5m === 'number'
-  const cacheCreation1h = has1h ? cw1h! : 0
+  const cacheCreation1h = positiveNumber(cw1h)
   const cacheCreation5m = has5m
-    ? cw5m!
-    : (has1h ? Math.max(0, cwTotalLegacy - (cw1h ?? 0)) : cwTotalLegacy)
+    ? positiveNumber(cw5m)
+    : (has1h ? Math.max(0, cwTotalLegacy - cacheCreation1h) : cwTotalLegacy)
   const cacheCreationTotal = cacheCreation1h + cacheCreation5m
 
   const tokens: TokenUsage = {
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
+    inputTokens: positiveNumber(usage.input_tokens),
+    outputTokens: positiveNumber(usage.output_tokens),
     cacheCreationInputTokens: cacheCreationTotal,
     cacheCreationInputTokens1h: cacheCreation1h,
     cacheCreationInputTokens5m: cacheCreation5m,
-    cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+    cacheReadInputTokens: positiveNumber(usage.cache_read_input_tokens),
     cachedInputTokens: 0,
     reasoningTokens: 0,
-    webSearchRequests: usage.server_tool_use?.web_search_requests ?? 0,
+    webSearchRequests: positiveNumber(usage.server_tool_use?.web_search_requests),
   }
 
   const tools = extractToolNames(msg.content ?? [])
@@ -626,7 +629,14 @@ async function scanProjectDirs(dirs: Array<{ path: string; name: string }>, seen
     const jsonlFiles = await collectJsonlFiles(dirPath)
 
     for (const filePath of jsonlFiles) {
-      const parsed = await parseSessionFile(filePath, dirName, seenMsgIds, dateRange)
+      let parsed: Awaited<ReturnType<typeof parseSessionFile>>
+      try {
+        parsed = await parseSessionFile(filePath, dirName, seenMsgIds, dateRange)
+      } catch {
+        // One unreadable/corrupt/partially-read session file must not abort the
+        // whole Claude scan. Skip it (no partial data is committed).
+        continue
+      }
       if (parsed && parsed.session.apiCalls > 0) {
         const projectPath = parsed.canonicalCwd ?? unsanitizePath(dirName)
         const projectKey = parsed.canonicalCwd ? normalizeProjectPathKey(parsed.canonicalCwd) : `slug:${dirName}`
@@ -764,41 +774,50 @@ async function parseProviderSources(
         pendingProjectPath = undefined
       }
 
-      for await (const call of parser.parse()) {
-        if (dateRange) {
-          if (!call.timestamp) continue
-          const ts = new Date(call.timestamp)
-          if (ts < dateRange.start || ts > dateRange.end) continue
-        }
+      try {
+        for await (const call of parser.parse()) {
+          if (dateRange) {
+            if (!call.timestamp) continue
+            const ts = new Date(call.timestamp)
+            if (ts < dateRange.start || ts > dateRange.end) continue
+          }
 
-        const project = call.project ?? source.project
-        const newTurn = providerCallToTurn(call)
+          const project = call.project ?? source.project
+          const newTurn = providerCallToTurn(call)
 
-        // Same turnId as the in-flight aggregate → append.
-        if (
-          call.turnId &&
-          pendingTurn &&
-          pendingProject === project &&
-          pendingTurn.sessionId === call.sessionId &&
-          // Re-derive the prior turnId from the first call's first assistantCall;
-          // we stash it as a synthetic field on the apiCall via deduplicationKey
-          // prefix already, but the simplest reliable check is to track it next
-          // to the pending turn.
-          (pendingTurn as ParsedTurn & { _turnId?: string })._turnId === call.turnId
-        ) {
-          pendingTurn.assistantCalls.push(...newTurn.assistantCalls)
-        } else {
-          flushPending()
-          pendingTurn = newTurn
-          pendingProject = project
-          pendingProjectPath = call.projectPath
-          if (call.turnId) {
-            (pendingTurn as ParsedTurn & { _turnId?: string })._turnId = call.turnId
+          // Same turnId as the in-flight aggregate → append.
+          if (
+            call.turnId &&
+            pendingTurn &&
+            pendingProject === project &&
+            pendingTurn.sessionId === call.sessionId &&
+            // Re-derive the prior turnId from the first call's first assistantCall;
+            // we stash it as a synthetic field on the apiCall via deduplicationKey
+            // prefix already, but the simplest reliable check is to track it next
+            // to the pending turn.
+            (pendingTurn as ParsedTurn & { _turnId?: string })._turnId === call.turnId
+          ) {
+            pendingTurn.assistantCalls.push(...newTurn.assistantCalls)
+          } else {
+            flushPending()
+            pendingTurn = newTurn
+            pendingProject = project
+            pendingProjectPath = call.projectPath
+            if (call.turnId) {
+              (pendingTurn as ParsedTurn & { _turnId?: string })._turnId = call.turnId
+            }
           }
         }
-      }
 
-      flushPending()
+        flushPending()
+      } catch {
+        // A single malformed or hostile session file must not abort analysis for
+        // the rest of this provider's sources — or, since parseAllSessions has no
+        // outer catch, every provider parsed after this one. Preserve whatever
+        // parsed cleanly before the bad record, then skip to the next source.
+        flushPending()
+        continue
+      }
     }
   } finally {
     if (providerName === 'codex') await flushCodexCache()

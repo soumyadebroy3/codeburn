@@ -1,4 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
+import { readSessionFile } from '../fs-utils.js'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -203,19 +204,17 @@ function parseJsonl(raw: string): GeminiSession | null {
 function createParser(source: SessionSource, seenKeys: Set<string>): SessionParser {
   return {
     async *parse(): AsyncGenerator<ParsedProviderCall> {
-      let raw: string
-      try {
-        raw = await readFile(source.path, 'utf-8')
-      } catch {
-        return
-      }
+      // readSessionFile applies the shared size cap + UTF-8 hardening, guarding
+      // against oversize/corrupt session files (upstream PR #362).
+      const raw = await readSessionFile(source.path)
+      if (raw === null) return
 
       let data: GeminiSession | null = null
 
       // Try single JSON first (Gemini CLI <=0.38), then JSONL (>=0.39)
       try {
         const parsed = JSON.parse(raw)
-        if (parsed.messages && parsed.sessionId) {
+        if (Array.isArray(parsed?.messages) && parsed.sessionId) {
           data = parsed
         }
       } catch { /* not single JSON */ }
@@ -224,7 +223,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         data = parseJsonl(raw)
       }
 
-      if (!data?.messages || !data.sessionId) return
+      if (!Array.isArray(data?.messages) || !data.sessionId) return
 
       const calls = parseSession(data, seenKeys)
       for (const call of calls) {
@@ -280,6 +279,7 @@ export function createGeminiProvider(): Provider {
       if (model === 'gemini-auto') return 'Gemini (auto)'
       const display: Record<string, string> = {
         'gemini-3-flash-preview': 'Gemini 3 Flash',
+        'gemini-3.5-flash': 'Gemini 3.5 Flash',
         'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
         'gemini-2.5-pro': 'Gemini 2.5 Pro',
         'gemini-2.5-flash': 'Gemini 2.5 Flash',

@@ -166,8 +166,11 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         if (seenKeys.has(dedupKey)) continue
         seenKeys.add(dedupKey)
 
-        const toolCalls = (msg.content ?? []).filter(c => c.type === 'toolCall' && c.name)
-        const tools = toolCalls.map(c => toolNameMap[c.name!] ?? c.name!)
+        const toolCalls = (Array.isArray(msg.content) ? msg.content : []).filter(c => c.type === 'toolCall' && c.name)
+        const tools = toolCalls.map(c => {
+          const lookup = toolNameMap[c.name!]
+          return typeof lookup === 'string' ? lookup : c.name!
+        })
         const bashCommands = toolCalls
           .filter(c => c.name === 'bash')
           .flatMap(c => {

@@ -26,7 +26,8 @@
  */
 
 import { spawn } from 'node:child_process'
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
+import { statSync } from 'node:fs'
 import process from 'node:process'
 
 const PROTOCOL_VERSION = '2024-11-05'
@@ -80,9 +81,27 @@ function spawnDocker(args, opts = {}) {
   })
 }
 
+// `workdir` arrives from untrusted JSON-RPC arguments. Confine it to a scan
+// root (SONAR_SCAN_ROOT, default this process's cwd) so a caller cannot mount
+// an arbitrary host path (e.g. "/", "~/.ssh") into the root scanner container.
+const SCAN_ROOT = resolve(process.env.SONAR_SCAN_ROOT || process.cwd())
+
+function resolveScanDir(workdir) {
+  // resolve() treats an absolute `workdir` as absolute (ignoring SCAN_ROOT),
+  // so an out-of-root absolute path is caught by the containment check below.
+  const dir = resolve(SCAN_ROOT, workdir || '.')
+  if (dir !== SCAN_ROOT && !dir.startsWith(SCAN_ROOT + sep)) {
+    throw new Error('workdir escapes the allowed scan root (' + SCAN_ROOT + '); set SONAR_SCAN_ROOT to broaden it')
+  }
+  let st
+  try { st = statSync(dir) } catch { throw new Error('workdir does not exist: ' + dir) }
+  if (!st.isDirectory()) throw new Error('workdir is not a directory: ' + dir)
+  return dir
+}
+
 async function runScan({ workdir, projectKey, sources, exclusions, projectName }) {
   ensureConfigured()
-  const cwd = resolve(workdir || process.cwd())
+  const cwd = resolveScanDir(workdir)
   const key = projectKey || DEFAULT_PROJECT
   if (!key) throw new Error('projectKey is required (set SONAR_PROJECT_KEY or pass projectKey)')
 
@@ -90,7 +109,9 @@ async function runScan({ workdir, projectKey, sources, exclusions, projectName }
     'run', '--rm',
     '-v', cwd + ':/usr/src',
     '-e', 'SONAR_HOST_URL=' + HOST,
-    '-e', 'SONAR_TOKEN=' + TOKEN,
+    // Pass the token by NAME only; docker pulls the value from the spawn env
+    // below, keeping the secret out of argv (process list / `docker inspect`).
+    '-e', 'SONAR_TOKEN',
     'sonarsource/sonar-scanner-cli:latest',
     '-Dsonar.projectKey=' + key,
   ]
@@ -102,7 +123,7 @@ async function runScan({ workdir, projectKey, sources, exclusions, projectName }
   dockerArgs.push('-Dsonar.tests=tests')
   dockerArgs.push('-Dsonar.test.exclusions=**/node_modules/**,**/dist/**')
 
-  const { stdout, stderr } = await spawnDocker(dockerArgs)
+  const { stdout, stderr } = await spawnDocker(dockerArgs, { env: { ...process.env, SONAR_TOKEN: TOKEN } })
   // Surface the analysis URL the scanner prints near the end of stdout.
   const dashboardMatch = stdout.match(/dashboard\?id=[^\s]+/)
   const dashboardUrl = dashboardMatch ? HOST + '/' + dashboardMatch[0] : HOST + '/dashboard?id=' + key

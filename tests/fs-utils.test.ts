@@ -103,6 +103,26 @@ describe('readSessionLines', () => {
     expect(closed.done).toBe(true)
   })
 
+  it('re-throws on a mid-stream read failure so callers can skip partial data', async () => {
+    // A directory passes the stat size-guard but errors (EISDIR) once the
+    // stream starts reading. That mid-stream failure must surface rather than
+    // be swallowed as a clean EOF — otherwise callers cache truncated data.
+    const dir = await mkdtemp(join(tmpdir(), 'codeburn-lines-dir-'))
+    tmpDirs.push(dir)
+    await expect((async () => {
+      const out: string[] = []
+      for await (const line of readSessionLines(dir)) out.push(line)
+      return out
+    })()).rejects.toThrow()
+  })
+
+  it('stays silent (no throw, no lines) when the file does not exist', async () => {
+    const missing = join(tmpdir(), 'codeburn-does-not-exist-xyz-123.jsonl')
+    const lines: string[] = []
+    for await (const line of readSessionLines(missing)) lines.push(line)
+    expect(lines).toEqual([])
+  })
+
   it('handles a trailing line without a final newline', async () => {
     const p = await tmpPath('first\nlast-no-newline')
     const lines: string[] = []
