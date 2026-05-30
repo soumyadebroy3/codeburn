@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.4.3 - 2026-05-30
+
+Hardening pass plus a batch of upstream fixes ported in from
+`getagentseal/codeburn`.
+
+### Added
+- **Warp** and **Forge** providers (upstream #350 / #401), lazy-loaded over
+  their on-disk SQLite stores. Warp Claude-variant pricing aliases (#378).
+- **DeepSeek v4** pricing (Pro/Flash) and a snapshot-fallback merge so any
+  model CodeBurn ships pricing for never reads as $0 when the runtime LiteLLM
+  cache is stale or incomplete (#367). `CODEBURN_CACHE_DIR` override.
+- **Gemini 3.5 Flash** model aliases + display names (#377/#379/#382 slivers).
+
+### Fixed
+- **Robustness against untrusted session files.** A single malformed or
+  hostile session file can no longer abort analysis for every provider — each
+  source is isolated; provider parsers (Copilot/Kiro/Qwen/Gemini/OpenClaw)
+  guard unchecked fields, `__proto__` tool names, and non-numeric token counts;
+  invalid timestamps, unbounded loops, plugin-dir traversal, and a few
+  install/IO edges are all closed. Adds XSS-defense and hostile-input tests.
+- **OpenCode** sessions yielding zero usage on newer DB schemas (#394).
+- **Copilot** MCP tool names normalized to `mcp__server__tool` (#374).
+- **Codex** forked-session token replays no longer double-count cost (#372);
+  user-message length capped and Gemini reads size-guarded (#362).
+
+### Changed
+- npm dependency floors moved to latest stable (commander 15, ink 7.0.4,
+  vitest/coverage 4.1.7, vite 8.0.14).
+
 ## 2.4.2 - 2026-05-20
 
 Two real fixes that landed once users opened v2.4.1:
