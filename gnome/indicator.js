@@ -616,7 +616,10 @@ class CodeBurnIndicator extends PanelMenu.Button {
       this._chartContainer.visible = false;
       return;
     }
-    const inTotals = days.map(d => Number(d?.inputTokens) || 0);
+    // "In" = everything fed to the model: fresh input + cache read + cache
+    // write. Including cache makes the chart reflect total token throughput
+    // (the basis cost is billed on); input alone hid ~95% of it on cached runs.
+    const inTotals = days.map(d => (Number(d?.inputTokens) || 0) + (Number(d?.cacheReadTokens) || 0) + (Number(d?.cacheWriteTokens) || 0));
     const outTotals = days.map(d => Number(d?.outputTokens) || 0);
     const totals = inTotals.map((v, i) => v + outTotals[i]);
     let maxTotal = 1;

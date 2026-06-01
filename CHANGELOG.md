@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.4.4 - 2026-06-01
+
+Token-usage display now reflects real throughput, plus a sweep of
+metric-correctness fixes across the menubar, HTML report, and CLI.
+
+### Fixed
+- **Token counts now include cache.** The menubar hero, the trend chart, and the
+  HTML report showed only `input + output` — on cache-heavy agentic runs that is
+  ~2–5% of real throughput, while the cost shown beside it billed all four token
+  buckets (so cost-per-"token" looked absurd). The token figure is now total
+  throughput (`input + output + cache read + cache write`), matching the
+  Anthropic usage object and the Claude Code / Warp counters, across macOS,
+  Windows, and GNOME. Cache read/write volume is forwarded in the menubar
+  payload (`current.cacheReadTokens` / `current.cacheWriteTokens`).
+- **Cache-hit rate** uses one denominator everywhere
+  (`input + cacheRead + cacheWrite`); the menubar/HTML previously dropped cache
+  writes and reported a higher rate than the TUI dashboard for the same data.
+- **Trend "% vs prior"** uses the token delta when the chart is showing tokens
+  (it always showed a cost-based delta, which could move the opposite way).
+- **"Yesterday"** shows "—" for a no-data day instead of a misleading "0".
+- **"1-shot" rate** exposes its sample size (e.g. "0/1") instead of a bare
+  "100%" whose hidden denominator could be a single edit.
+- **`Last 7 Days` / `Last 30 Days`** ranges span 7 / 30 calendar days, not 8 / 31.
+- **Forecast** "On pace for" projects from completed days only (today's partial
+  day no longer drags the average down); "Avg/day" and the week-over-week tip
+  use completed-day windows; day 1 no longer false-fires the overspend tip.
+- **Leverage** is period-normalized — a single-period API value is scaled to a
+  30-day run-rate before being compared to the monthly price, instead of
+  dividing a short window by the full monthly price; the zero-paid `999×`
+  sentinel is gone and the HTML banner names the actual window.
+- **Retry detection** counts a re-edit after any intervening check (not only a
+  Bash), while still not flagging sequential multi-file edits; retry-tax is
+  labeled a worst-case estimate.
+
+### Added
+- `claude-opus-4-8` pricing in the bundled snapshot (`$5/$25` per M, the 4.5–4.7
+  tier) so offline builds don't fall back to the legacy `claude-opus-4` rate
+  (`$15/$75`) and overstate Opus spend ~2.6×.
+
+### Changed
+- Hero token ↑/↓ split now follows the conventional in↑ / out↓ direction.
+
 ## 2.4.3 - 2026-05-30
 
 Hardening pass plus a batch of upstream fixes ported in from

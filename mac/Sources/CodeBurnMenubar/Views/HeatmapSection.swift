@@ -150,7 +150,12 @@ private struct TrendInsight: View {
         let maxValue = max(bars.map(metric).max() ?? 1, 0.01)
         let avgValue = bars.isEmpty ? 0 : bars.map(metric).reduce(0, +) / Double(bars.count)
         let peakValue = bars.filter({ metric($0) > 0 }).max(by: { metric($0) < metric($1) })
-        let yesterdayValue = stats.yesterdayBar.map(metric)
+        // Only show a Yesterday figure when that day had real data — a zero-filled
+        // gap day renders "—", not a misleading "0 tok"/"$0.00".
+        let yesterdayValue = stats.yesterdayBar.flatMap { $0.hasData ? metric($0) : nil }
+        // Match the delta to the metric on screen: token delta when showing
+        // tokens, cost delta otherwise.
+        let delta = useTokens ? stats.tokenDeltaPercent : stats.deltaPercent
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -164,7 +169,7 @@ private struct TrendInsight: View {
                         .foregroundStyle(.primary)
                 }
                 Spacer()
-                if let delta = stats.deltaPercent {
+                if let delta {
                     HStack(spacing: 3) {
                         Image(systemName: delta >= 0 ? "arrow.up.right" : "arrow.down.right")
                             .font(.system(size: 9, weight: .bold))
@@ -425,10 +430,18 @@ private struct TrendBar: Identifiable {
     let cost: Double
     let inputTokens: Double
     let outputTokens: Double
+    let cacheReadTokens: Double
+    let cacheWriteTokens: Double
     let isToday: Bool
+    // Whether a real DailyHistoryEntry backed this day. Zero-filled gap days
+    // have hasData == false so callers can render "—" instead of a false "0".
+    let hasData: Bool
     let topModels: [DailyModelBreakdown]
 
-    var tokens: Double { inputTokens + outputTokens }
+    // Total tokens processed = input + output + cache read + cache write —
+    // the same basis as the hero and the workload `cost` is billed on. The old
+    // input+output-only figure hid ~95% of throughput on cached agentic runs.
+    var tokens: Double { inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens }
 }
 
 private struct TrendStats {
@@ -437,6 +450,10 @@ private struct TrendStats {
     let peak: TrendBar?
     let activeDays: Int
     let deltaPercent: Double?
+    /// Prior-window delta on the token basis, used when the panel is showing
+    /// tokens so the "% vs prior" badge matches the headline/bars instead of
+    /// silently reporting a cost-based delta.
+    let tokenDeltaPercent: Double?
     let yesterdayBar: TrendBar?
 }
 
@@ -457,7 +474,10 @@ private func buildTrendBars(from days: [DailyHistoryEntry]) -> [TrendBar] {
             cost: entry?.cost ?? 0,
             inputTokens: Double(entry?.inputTokens ?? 0),
             outputTokens: Double(entry?.outputTokens ?? 0),
+            cacheReadTokens: Double(entry?.cacheReadTokens ?? 0),
+            cacheWriteTokens: Double(entry?.cacheWriteTokens ?? 0),
             isToday: key == todayKey,
+            hasData: entry != nil,
             topModels: entry?.topModels ?? []
         ))
     }
@@ -475,15 +495,23 @@ private func computeTrendStats(bars: [TrendBar], allDays: [DailyHistoryEntry]) -
     let today = calendar.startOfDay(for: Date())
     let priorWindowStart = calendar.date(byAdding: .day, value: -(2 * trendDays - 1), to: today)
     let thisWindowStart = calendar.date(byAdding: .day, value: -(trendDays - 1), to: today)
+    let tokenTotal = bars.reduce(0.0) { $0 + $1.tokens }
     var deltaPercent: Double? = nil
+    var tokenDeltaPercent: Double? = nil
     if let priorStart = priorWindowStart, let thisStart = thisWindowStart {
         let priorStartStr = formatter.string(from: priorStart)
         let thisStartStr = formatter.string(from: thisStart)
-        let priorTotal = allDays
-            .filter { $0.date >= priorStartStr && $0.date < thisStartStr }
-            .reduce(0.0) { $0 + $1.cost }
+        let priorDays = allDays.filter { $0.date >= priorStartStr && $0.date < thisStartStr }
+        let priorTotal = priorDays.reduce(0.0) { $0 + $1.cost }
         if priorTotal > 0 {
             deltaPercent = ((total - priorTotal) / priorTotal) * 100
+        }
+        // Token delta on the same all-buckets basis as TrendBar.tokens, so the
+        // "% vs prior" badge matches the token headline/bars when tokens are the
+        // active metric instead of silently showing a cost-based delta.
+        let priorTokenTotal = priorDays.reduce(0.0) { $0 + Double($1.inputTokens) + Double($1.outputTokens) + Double($1.cacheReadTokens) + Double($1.cacheWriteTokens) }
+        if priorTokenTotal > 0 {
+            tokenDeltaPercent = ((tokenTotal - priorTokenTotal) / priorTokenTotal) * 100
         }
     }
 
@@ -497,6 +525,7 @@ private func computeTrendStats(bars: [TrendBar], allDays: [DailyHistoryEntry]) -
         peak: peak,
         activeDays: active,
         deltaPercent: deltaPercent,
+        tokenDeltaPercent: tokenDeltaPercent,
         yesterdayBar: yesterdayBar
     )
 }
@@ -531,9 +560,9 @@ private struct ForecastInsight: View {
             }
 
             HStack(spacing: 14) {
-                ForecastStat(label: "Avg/day (this wk)", value: stats.weekAvg.asCompactCurrency())
+                ForecastStat(label: "Avg/day (7d)", value: stats.weekAvg.asCompactCurrency())
                 ForecastStat(label: "Yesterday", value: stats.yesterday.asCompactCurrency())
-                ForecastStat(label: "Last 7d", value: stats.weekTotal.asCompactCurrency())
+                ForecastStat(label: "Prev 7d", value: stats.weekTotal.asCompactCurrency())
             }
 
             if let prevTotal = stats.previousMonthTotal {
@@ -599,14 +628,31 @@ private func computeForecast(days: [DailyHistoryEntry]) -> ForecastStats {
     let totalDays = rangeOfMonth.count
     let dayOfMonth = comps.day ?? 1
 
+    let todayStr = formatter.string(from: calendar.startOfDay(for: now))
     let mtdEntries = days.filter { $0.date >= firstStr }
     let mtd = mtdEntries.reduce(0.0) { $0 + $1.cost }
-    let avgPerElapsedDay = dayOfMonth > 0 ? mtd / Double(dayOfMonth) : 0
-    let projection = avgPerElapsedDay * Double(totalDays)
+    // Project from COMPLETED days only. Counting today (a partial day) as a full
+    // day in the divisor drags the per-day average down and biases the forecast
+    // low — worst right after midnight. projection = everything spent so far
+    // (incl. today) + average of completed days × days still remaining.
+    let completedDays = dayOfMonth - 1
+    let projection: Double
+    if completedDays > 0 {
+        let priorCost = mtdEntries.filter { $0.date < todayStr }.reduce(0.0) { $0 + $1.cost }
+        let avgPerCompletedDay = priorCost / Double(completedDays)
+        let remainingDays = max(0, totalDays - dayOfMonth)
+        projection = mtd + avgPerCompletedDay * Double(remainingDays)
+    } else {
+        // 1st of the month: no completed days to average from.
+        projection = mtd * Double(totalDays)
+    }
 
-    let weekStart = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now))
+    // Last 7 COMPLETED days (ending yesterday), so the partial current day
+    // doesn't drag the average down. Window is exactly 7 full days.
+    let weekStart = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: now))
     let weekStartStr = weekStart.map { formatter.string(from: $0) } ?? ""
-    let weekEntries = days.filter { $0.date >= weekStartStr }
+    let weekEndStr = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)).map { formatter.string(from: $0) } ?? ""
+    let weekEntries = days.filter { $0.date >= weekStartStr && $0.date <= weekEndStr }
     let weekTotal = weekEntries.reduce(0.0) { $0 + $1.cost }
     let weekAvg = weekTotal / 7.0
 
@@ -1474,9 +1520,10 @@ private struct RetryTaxSection: View {
                     Image(systemName: "arrow.2.squarepath")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.orange)
-                    Text("Retry tax")
+                    Text("Retry tax (est.)")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
+                        .help("Worst-case estimate: prices each retry at the full cost of its edit turn (including cache reads).")
                     Spacer()
                     Text(retryTax.totalUSD.asCompactCurrency())
                         .font(.codeMono(size: 11, weight: .bold))
@@ -1499,7 +1546,7 @@ private struct RetryTaxSection: View {
                     }
                 }
 
-                Text("\(retryTax.retries) retries across \(retryTax.editTurns) edits")
+                Text("\(retryTax.retries) retries across \(retryTax.editTurns) edits · upper bound")
                     .font(.system(size: 9.5))
                     .foregroundStyle(.quaternary)
 

@@ -224,16 +224,21 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
     let today = calendar.startOfDay(for: now)
     let costByDate = Dictionary(history.map { ($0.date, $0.cost) }, uniquingKeysWith: +)
 
-    let lastWeekStart = calendar.date(byAdding: .day, value: -6, to: today)
-    let priorWeekStart = calendar.date(byAdding: .day, value: -13, to: today)
-    let priorWeekEnd = calendar.date(byAdding: .day, value: -7, to: today)
+    // Compare two equal-length COMPLETED 7-day windows that both exclude the
+    // partial current day, so a half-finished today doesn't bias the delta
+    // toward "spend down". cur = [today-7 … yesterday], prior = [today-14 … today-8].
+    let curStart = calendar.date(byAdding: .day, value: -7, to: today)
+    let curEnd = calendar.date(byAdding: .day, value: -1, to: today)
+    let priorStart = calendar.date(byAdding: .day, value: -14, to: today)
+    let priorEnd = calendar.date(byAdding: .day, value: -8, to: today)
     var weekDeltaPercent: Double? = nil
-    if let lws = lastWeekStart, let pws = priorWeekStart, let pwe = priorWeekEnd {
-        let lwsStr = formatter.string(from: lws)
-        let pwsStr = formatter.string(from: pws)
-        let pweStr = formatter.string(from: pwe)
-        let thisWeek = history.filter { $0.date >= lwsStr }.reduce(0.0) { $0 + $1.cost }
-        let prior = history.filter { $0.date >= pwsStr && $0.date <= pweStr }.reduce(0.0) { $0 + $1.cost }
+    if let cs = curStart, let ce = curEnd, let ps = priorStart, let pe = priorEnd {
+        let csStr = formatter.string(from: cs)
+        let ceStr = formatter.string(from: ce)
+        let psStr = formatter.string(from: ps)
+        let peStr = formatter.string(from: pe)
+        let thisWeek = history.filter { $0.date >= csStr && $0.date <= ceStr }.reduce(0.0) { $0 + $1.cost }
+        let prior = history.filter { $0.date >= psStr && $0.date <= peStr }.reduce(0.0) { $0 + $1.cost }
         if prior > 0 {
             weekDeltaPercent = ((thisWeek - prior) / prior) * 100
         }
@@ -254,10 +259,19 @@ private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
         let rangeOfMonth = calendar.range(of: .day, in: .month, for: firstOfMonth)
     {
         let firstStr = formatter.string(from: firstOfMonth)
-        let mtd = history.filter { $0.date >= firstStr }.reduce(0.0) { $0 + $1.cost }
+        let todayStr = formatter.string(from: today)
+        let mtdEntries = history.filter { $0.date >= firstStr }
+        let mtd = mtdEntries.reduce(0.0) { $0 + $1.cost }
         let dayOfMonth = comps.day ?? 1
-        if dayOfMonth > 0 {
-            projectedMonth = (mtd / Double(dayOfMonth)) * Double(rangeOfMonth.count)
+        // Project from completed days only (mirrors HeatmapSection.computeForecast).
+        // Leaving projectedMonth nil on day 1 also suppresses the ">1.3× vs last
+        // month" risk tip firing off a single partial day.
+        let completedDays = dayOfMonth - 1
+        if completedDays > 0 {
+            let priorCost = mtdEntries.filter { $0.date < todayStr }.reduce(0.0) { $0 + $1.cost }
+            let avgPerCompletedDay = priorCost / Double(completedDays)
+            let remainingDays = max(0, rangeOfMonth.count - dayOfMonth)
+            projectedMonth = mtd + avgPerCompletedDay * Double(remainingDays)
         }
 
         if

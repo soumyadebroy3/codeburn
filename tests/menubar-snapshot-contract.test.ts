@@ -40,6 +40,12 @@ describe('Menubar snapshot contract (v1)', () => {
     const payload = buildMenubarPayload(period, [], null)
     expect(Object.keys(payload.current).sort()).toEqual([
       'cacheHitPercent',
+      // cache token volume forwarded so the menubar/GNOME/Windows token views
+      // can show total throughput (input+output+cacheRead+cacheWrite), the same
+      // basis cost is billed on. Previously only input+output were exposed,
+      // which understated real token usage by ~95% on cache-heavy runs.
+      'cacheReadTokens',
+      'cacheWriteTokens',
       'calls',
       'cost',
       'inputTokens',

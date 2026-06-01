@@ -65,6 +65,13 @@ struct ActivityRow: View {
 
     private var oneShotText: String {
         guard let rate = activity.oneShotRate else { return "—" }
+        // With only a handful of edit turns a bare "100%" overstates confidence
+        // and reads as if it were over the larger Turns count. Show the raw
+        // fraction (hits/edits) until there's a meaningful sample.
+        if activity.editTurns < 3 {
+            let hits = Int((rate * Double(activity.editTurns)).rounded())
+            return "\(hits)/\(activity.editTurns)"
+        }
         return "\(Int(rate * 100))%"
     }
 }

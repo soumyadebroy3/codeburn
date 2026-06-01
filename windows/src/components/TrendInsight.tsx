@@ -13,6 +13,8 @@ type TrendBar = {
   cost: number
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   isToday: boolean
   topModels: Array<{ name: string; totalTokens?: number; inputTokens?: number; outputTokens?: number }>
 }
@@ -37,6 +39,8 @@ function buildBars(days: DailyEntry[]): TrendBar[] {
       cost: entry?.cost ?? 0,
       inputTokens: entry?.inputTokens ?? 0,
       outputTokens: entry?.outputTokens ?? 0,
+      cacheReadTokens: entry?.cacheReadTokens ?? 0,
+      cacheWriteTokens: entry?.cacheWriteTokens ?? 0,
       isToday: key === tk,
       topModels: entry?.topModels ?? [],
     })
@@ -64,9 +68,13 @@ type Props = Readonly<{
 export function TrendInsight({ days, currency }: Props) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const bars = buildBars(days)
-  const totalTokens = bars.reduce((s, b) => s + b.inputTokens + b.outputTokens, 0)
+  // Total tokens processed = input + output + cache read + cache write — the
+  // basis cost is billed on. input+output alone hides ~95% of throughput on
+  // cache-heavy agentic runs.
+  const tokensOf = (b: TrendBar) => b.inputTokens + b.outputTokens + b.cacheReadTokens + b.cacheWriteTokens
+  const totalTokens = bars.reduce((s, b) => s + tokensOf(b), 0)
   const useTokens = totalTokens > 0
-  const metric = (b: TrendBar) => useTokens ? b.inputTokens + b.outputTokens : b.cost
+  const metric = (b: TrendBar) => useTokens ? tokensOf(b) : b.cost
   const maxVal = Math.max(...bars.map(metric), 0.01)
   const avgVal = bars.length > 0 ? bars.reduce((s, b) => s + metric(b), 0) / bars.length : 0
   const totalCost = bars.reduce((s, b) => s + b.cost, 0)

@@ -47,10 +47,11 @@ describe('getDateRange', () => {
   it('"week" returns the last 7 days', () => {
     const { range, label } = getDateRange('week')
     expect(label).toBe('Last 7 Days')
-    // start = midnight 7 days ago, end = today 23:59:59.999 -> ~8 days span.
+    // "Last 7 Days" = today + the 6 preceding days = 7 calendar days. start =
+    // midnight 6 days ago, end = today 23:59:59.999 -> just under 7 days span.
     const diffDays = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60 * 24)
-    expect(diffDays).toBeGreaterThanOrEqual(7)
-    expect(diffDays).toBeLessThanOrEqual(8)
+    expect(diffDays).toBeGreaterThanOrEqual(6)
+    expect(diffDays).toBeLessThan(7)
   })
 
   it('"month" starts on day 1 of the current month', () => {
@@ -62,9 +63,11 @@ describe('getDateRange', () => {
   it('"30days" returns 30 days back', () => {
     const { range, label } = getDateRange('30days')
     expect(label).toBe('Last 30 Days')
+    // "Last 30 Days" = today + the 29 preceding days = 30 calendar days. start =
+    // midnight 29 days ago, end = today 23:59:59.999 -> just under 30 days span.
     const diffDays = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60 * 24)
-    expect(diffDays).toBeGreaterThanOrEqual(30)
-    expect(diffDays).toBeLessThanOrEqual(31)
+    expect(diffDays).toBeGreaterThanOrEqual(29)
+    expect(diffDays).toBeLessThan(30)
   })
 
   it('"today" starts at local midnight', () => {

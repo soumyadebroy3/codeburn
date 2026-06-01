@@ -188,6 +188,8 @@ export function App() {
               models={payload.current.topModels}
               inputTokens={payload.current.inputTokens}
               outputTokens={payload.current.outputTokens}
+              cacheReadTokens={payload.current.cacheReadTokens}
+              cacheWriteTokens={payload.current.cacheWriteTokens}
               cacheHitPercent={payload.current.cacheHitPercent}
               currency={currency}
             />

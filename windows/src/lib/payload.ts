@@ -11,6 +11,8 @@ export type MenubarPayload = {
     oneShotRate: number | null
     inputTokens: number
     outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
     cacheHitPercent: number
     topActivities: Activity[]
     topModels: Model[]
@@ -60,6 +62,8 @@ export const placeholderPayload: MenubarPayload = {
     oneShotRate: null,
     inputTokens: 0,
     outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
     cacheHitPercent: 0,
     topActivities: [],
     topModels: [],
