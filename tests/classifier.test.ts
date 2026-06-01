@@ -40,6 +40,39 @@ function makeTurn(calls: ParsedApiCall[], userMessage = ''): ParsedTurn {
   }
 }
 
+describe('classifyTurn — retry detection', () => {
+  const editStep = (t: string) => makeCall({ tools: [t] })
+
+  it('counts an edit that returns after a Bash (Edit→Bash→Edit)', () => {
+    const turn = makeTurn([editStep('Edit'), editStep('Bash'), editStep('Edit')])
+    expect(classifyTurn(turn).retries).toBe(1)
+  })
+
+  it('counts an edit that returns after a non-Bash check (Edit→Read→Edit)', () => {
+    const turn = makeTurn([editStep('Edit'), editStep('Read'), editStep('Edit')])
+    expect(classifyTurn(turn).retries).toBe(1)
+  })
+
+  it('does NOT count consecutive edits (multi-file change, Edit→Edit)', () => {
+    const turn = makeTurn([editStep('Edit'), editStep('Edit')])
+    expect(classifyTurn(turn).retries).toBe(0)
+  })
+
+  it('does not count an edit followed only by a check (Edit→Bash, no return)', () => {
+    const turn = makeTurn([editStep('Edit'), editStep('Bash')])
+    expect(classifyTurn(turn).retries).toBe(0)
+  })
+
+  it('counts two rework cycles (Edit→Bash→Edit→Bash→Edit)', () => {
+    const turn = makeTurn([editStep('Edit'), editStep('Bash'), editStep('Edit'), editStep('Bash'), editStep('Edit')])
+    expect(classifyTurn(turn).retries).toBe(2)
+  })
+
+  it('is zero for a single edit', () => {
+    expect(classifyTurn(makeTurn([editStep('Edit')])).retries).toBe(0)
+  })
+})
+
 describe('classifyTurn — Skill subCategory', () => {
   it('attaches subCategory when a Skill tool fires alone (input.skill)', () => {
     const turn = makeTurn([makeCall({ tools: ['Skill'], skills: ['init'] })])

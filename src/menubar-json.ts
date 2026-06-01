@@ -59,12 +59,21 @@ export const MENUBAR_SCHEMA_VERSION = 1
  * subscription users (they pay flat, not per-token).
  */
 export type ValuationBlock = {
-  /** Flat amount the user pays for this period (monthlyUsd from the configured plan). */
+  /** Flat monthly amount the user pays (monthlyUsd from the configured plan). */
   paidUSD: number
-  /** Sum of pay-as-you-go API rates × tokens for this period. The "spend" number we currently show. */
+  /** Sum of pay-as-you-go API rates × tokens for the displayed period. */
   apiValueUSD: number
-  /** apiValueUSD / paidUSD. >= 1 means you're getting more than you pay for. */
+  /**
+   * monthlyValue / paidUSD. monthlyValue normalizes apiValueUSD to a 30-day
+   * run-rate first, so leverage compares like-for-like against the monthly
+   * price regardless of the displayed period. >= 1 means you're getting more
+   * than you pay for.
+   */
   leverage: number
+  /** apiValueUSD scaled to a 30-day run-rate: apiValueUSD × 30 / periodDays. */
+  monthlyValue?: number
+  /** Number of calendar days the apiValueUSD figure covers. */
+  periodDays?: number
   /** Plan id (e.g. 'claude-max') and display name. Null when no plan is configured. */
   plan: { id: string; displayName: string; monthlyUsd: number } | null
 }
@@ -86,11 +95,17 @@ export type MenubarPayload = {
     oneShotRate: number | null
     inputTokens: number
     outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
     cacheHitPercent: number
     topActivities: Array<{
       name: string
       cost: number
       turns: number
+      // Number of edit turns — the denominator behind oneShotRate. Forwarded so
+      // the UI can show the sample size (a "100%" over 1 edit is not the same
+      // claim as "100%" over 40) instead of implying the rate is over `turns`.
+      editTurns: number
       oneShotRate: number | null
     }>
     topModels: Array<{
@@ -166,8 +181,13 @@ function aggregateOneShotRate(categories: PeriodData['categories']): number | nu
   return oneShots / edits
 }
 
-function cacheHitPercent(inputTokens: number, cacheReadTokens: number): number {
-  const denom = inputTokens + cacheReadTokens
+// Cache hit rate = share of total prompt-input tokens served from cache. The
+// denominator includes cache writes: those are prompt tokens processed fresh
+// this turn (a miss) that also got stored, so they belong on the miss side.
+// Matches the TUI dashboard (dashboard.tsx) and compare-stats so every surface
+// reports the same rate for the same workload.
+function cacheHitPercent(inputTokens: number, cacheReadTokens: number, cacheWriteTokens: number): number {
+  const denom = inputTokens + cacheReadTokens + cacheWriteTokens
   if (denom === 0) return 0
   return (cacheReadTokens / denom) * 100
 }
@@ -177,6 +197,7 @@ function buildTopActivities(categories: PeriodData['categories']): MenubarPayloa
     name: cat.name,
     cost: cat.cost,
     turns: cat.turns,
+    editTurns: cat.editTurns,
     oneShotRate: oneShotRateFor(cat.editTurns, cat.oneShotTurns),
   }))
 }
@@ -229,15 +250,26 @@ function buildHistory(daily: DailyHistoryEntry[] | undefined): MenubarPayload['h
 export function computeValuation(
   apiValueUSD: number,
   plan: { id: string; displayName: string; monthlyUsd: number } | null,
+  periodDays?: number,
 ): ValuationBlock | undefined {
   if (!plan) return undefined
   const paidUSD = plan.monthlyUsd
-  // Leverage is undefined when paid is 0 (nominally a "free" plan); use Infinity-clamp
-  // to a large finite value so JSON consumers don't blow up on `Infinity`.
-  const leverage = paidUSD > 0 ? apiValueUSD / paidUSD : 999
+  // A non-positive paid amount (only reachable via a hand-edited config) has no
+  // meaningful leverage — skip the block rather than emit a bogus 999x sentinel
+  // that renders literally as "999.0× leverage".
+  if (!(paidUSD > 0)) return undefined
+  // Normalize the period's API value to a 30-day run-rate before comparing to
+  // the monthly price. Dividing a single-period value (e.g. today, or 30 days)
+  // by the FULL monthly price made leverage look artificially small. periodDays
+  // omitted => treat as a full month (no scaling) for backward compatibility.
+  const days = periodDays && periodDays > 0 ? periodDays : 30
+  const monthlyValue = apiValueUSD * (30 / days)
+  const leverage = monthlyValue / paidUSD
   return {
     paidUSD,
     apiValueUSD,
+    monthlyValue,
+    periodDays: days,
     leverage,
     plan: { id: plan.id, displayName: plan.displayName, monthlyUsd: plan.monthlyUsd },
   }
@@ -281,7 +313,9 @@ export function buildMenubarPayload(
       oneShotRate: aggregateOneShotRate(current.categories),
       inputTokens: finite(current.inputTokens),
       outputTokens: finite(current.outputTokens),
-      cacheHitPercent: cacheHitPercent(current.inputTokens, current.cacheReadTokens),
+      cacheReadTokens: finite(current.cacheReadTokens),
+      cacheWriteTokens: finite(current.cacheWriteTokens),
+      cacheHitPercent: cacheHitPercent(current.inputTokens, current.cacheReadTokens, current.cacheWriteTokens),
       topActivities: buildTopActivities(current.categories),
       topModels: buildTopModels(current.models),
       providers: buildProviders(providers),

@@ -17,6 +17,10 @@ const MANUAL_ENTRIES = {
   // LiteLLM PR #27056 is not merged yet. Source: https://api-docs.deepseek.com/quick_start/pricing
   'deepseek-v4-flash':      [1.4e-7, 2.8e-7, 0, 2.8e-9],
   'deepseek-v4-pro':        [4.35e-7, 8.7e-7, 0, 3.625e-9],
+  // Opus 4.8 ($5/$25 per M, same tier as 4.5–4.7) is not in the pinned LiteLLM
+  // commit yet. Without it an offline build falls back to the bare
+  // `claude-opus-4` key at the legacy $15/$75 and overstates Opus spend ~2.6×.
+  'claude-opus-4-8':        [5e-6, 2.5e-5, 6.25e-6, 5e-7],
 }
 
 // =============================================================================

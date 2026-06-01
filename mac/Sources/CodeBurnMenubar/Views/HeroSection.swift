@@ -51,11 +51,13 @@ struct HeroSection: View {
 
                 VStack(alignment: .trailing, spacing: 2) {
                     if store.displayMetric == .tokens {
-                        // ↑ output (model emitted), ↓ input (user prompted in).
+                        // ↑ in — everything fed to the model (fresh input + cache
+                        // read + cache write). ↓ out — tokens the model generated.
+                        // Arrows follow the upload=in / download=out convention.
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text(formatTokens(Double(store.payload.current.outputTokens)))
+                            Text(formatTokens(Double(inputSideTokens)))
                         }
                         .font(.system(size: 11))
                         .monospacedDigit()
@@ -63,7 +65,7 @@ struct HeroSection: View {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.down")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text(formatTokens(Double(store.payload.current.inputTokens)))
+                            Text(formatTokens(Double(store.payload.current.outputTokens)))
                         }
                         .font(.system(size: 10.5))
                         .monospacedDigit()
@@ -114,12 +116,29 @@ struct HeroSection: View {
         }
     }
 
-    /// Hero figure text. Falls back to currency for `.cost`; renders the
-    /// combined token total for `.tokens` (the side caption splits it into
-    /// output↑ / input↓).
+    /// Total tokens the model processed for the period: fresh input + cache
+    /// read + cache write + output. This is the basis `cost` is billed on and
+    /// matches the token counters in Claude Code / Warp / the Anthropic usage
+    /// object. The previous hero showed only input+output — on cache-heavy
+    /// agentic runs that's ~2-5% of real throughput and read as wildly
+    /// inconsistent with the dollar figure beside it.
+    private var totalTokens: Int {
+        let c = store.payload.current
+        return c.inputTokens + c.outputTokens + c.cacheReadTokens + c.cacheWriteTokens
+    }
+
+    /// The "input side" total: everything fed to the model. Cache reads
+    /// usually dominate this on agentic workloads.
+    private var inputSideTokens: Int {
+        let c = store.payload.current
+        return c.inputTokens + c.cacheReadTokens + c.cacheWriteTokens
+    }
+
+    /// Hero figure text. Falls back to currency for `.cost`; renders the total
+    /// token throughput for `.tokens` (the side caption splits it into in↑ / out↓).
     private var heroText: String {
         if store.displayMetric == .tokens {
-            let total = Double(store.payload.current.inputTokens + store.payload.current.outputTokens)
+            let total = Double(totalTokens)
             if total >= 1_000_000_000 { return String(format: "%.2fB tok", total / 1_000_000_000) }
             if total >= 1_000_000 { return String(format: "%.1fM tok", total / 1_000_000) }
             if total >= 1_000 { return String(format: "%.0fK tok", total / 1_000) }

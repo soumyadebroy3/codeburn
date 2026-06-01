@@ -334,12 +334,17 @@ async function writeHtmlExport(args: WriteHtmlExportArgs): Promise<string> {
   // Pull the user's plan (if set) so the HTML hero section can show
   // "$200 paid · $X value · Yx leverage" instead of the raw spend.
   const planRecord = await readPlan().catch(() => undefined)
+  // The HTML export reports the last period (the 30-day window, or the explicit
+  // --from/--to custom range). Normalize leverage against that span.
+  const htmlPeriodDays = args.customRange
+    ? Math.max(1, Math.round((args.customRange.end.getTime() - args.customRange.start.getTime()) / 86_400_000))
+    : 30
   const valuation = planRecord
     ? computeValuation(data.cost, {
         id: planRecord.id,
         displayName: planDisplayName(planRecord.id),
         monthlyUsd: planRecord.monthlyUsd,
-      })
+      }, htmlPeriodDays)
     : undefined
 
   const payload = buildMenubarPayload(data, providers, null, dailyHistory, valuation)
@@ -382,9 +387,11 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   const totalOutput = sessions.reduce((s, sess) => s + sess.totalOutputTokens, 0)
   const totalCacheRead = sessions.reduce((s, sess) => s + sess.totalCacheReadTokens, 0)
   const totalCacheWrite = sessions.reduce((s, sess) => s + sess.totalCacheWriteTokens, 0)
-  // Match src/menubar-json.ts:cacheHitPercent: reads over reads+fresh-input. cache_write
-  // counts tokens being stored, not served, so it doesn't belong in the denominator.
-  const cacheHitDenom = totalInput + totalCacheRead
+  // Cache hit rate = reads / (fresh input + cache read + cache write). cache_write
+  // tokens were processed fresh this turn (a miss) and then stored, so they belong
+  // on the miss side of the denominator. Matches src/menubar-json.ts:cacheHitPercent,
+  // dashboard.tsx, and compare-stats — every surface reports the same rate.
+  const cacheHitDenom = totalInput + totalCacheRead + totalCacheWrite
   const cacheHitPercent = cacheHitDenom > 0 ? Math.round((totalCacheRead / cacheHitDenom) * 1000) / 10 : 0
 
   const daily = Object.entries(buildDailyMap(sessions))
@@ -695,11 +702,14 @@ program
       const planRecord = await readPlan().catch(() => undefined)
       let valuation
       if (planRecord) {
+        const periodDays = Math.max(1, Math.round(
+          (periodInfo.range.end.getTime() - periodInfo.range.start.getTime()) / 86_400_000,
+        ))
         valuation = computeValuation(currentData.cost, {
           id: planRecord.id,
           displayName: planDisplayName(planRecord.id),
           monthlyUsd: planRecord.monthlyUsd,
-        })
+        }, periodDays)
       }
 
       // Optimize-tab analytics (upstream PR #349). retryTax is the dollar

@@ -13,11 +13,13 @@ type Props = Readonly<{
   models: Model[]
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   cacheHitPercent: number
   currency: CurrencyState
 }>
 
-export function ModelsSection({ models, inputTokens, outputTokens, cacheHitPercent, currency }: Props) {
+export function ModelsSection({ models, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cacheHitPercent, currency }: Props) {
   const [expanded, setExpanded] = useState(true)
 
   if (models.length === 0) return null
@@ -54,12 +56,14 @@ export function ModelsSection({ models, inputTokens, outputTokens, cacheHitPerce
             )
           })}
 
-          {(inputTokens > 0 || outputTokens > 0) && (
+          {(inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0) && (
             <div className="tokens-line">
               <span className="tokens-label">Tokens</span>
               <span className="tokens-value">{formatTokens(inputTokens)} in</span>
               <span className="tokens-sep">&middot;</span>
               <span className="tokens-value">{formatTokens(outputTokens)} out</span>
+              <span className="tokens-sep">&middot;</span>
+              <span className="tokens-value">{formatTokens(cacheReadTokens + cacheWriteTokens)} cache</span>
               <span className="tokens-sep">&middot;</span>
               <span className="tokens-value">{Math.round(cacheHitPercent)}% cache hit</span>
             </div>

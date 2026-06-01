@@ -464,15 +464,23 @@ function tokenMixBar(p: MenubarPayload['current']): string {
   <div class="caption">Cache reads carry only ~10% of fresh-input price; high cache hit drives spend down.</div>`
 }
 
-function planBanner(v: NonNullable<MenubarPayload['valuation']>, autoDetected: boolean): string {
+function planBanner(v: NonNullable<MenubarPayload['valuation']>, autoDetected: boolean, periodLabel: string): string {
   const planName = v.plan?.displayName ?? 'Plan'
+  // leverage is monthly-normalized. Only render the prescriptive downgrade /
+  // paying-off verdict when the window is (close to) a full billing month;
+  // for shorter windows show a neutral run-rate projection so a single light
+  // or heavy day doesn't read as "you'd save by downgrading".
+  const isFullMonth = (v.periodDays ?? 30) >= 28
+  const monthlyValue = v.monthlyValue ?? v.apiValueUSD
   const isUnder = v.leverage < 1
-  const className = isUnder ? 'plan-banner under' : 'plan-banner'
-  const verdict = isUnder
-    ? `Underutilizing — you'd save by downgrading.`
-    : v.leverage >= 3
-      ? `Heavy use — your plan is paying off.`
-      : `Plan covers your usage.`
+  const className = isUnder && isFullMonth ? 'plan-banner under' : 'plan-banner'
+  const verdict = !isFullMonth
+    ? `≈ ${formatUSD(monthlyValue)}/mo at this rate`
+    : isUnder
+      ? `Underutilizing — you'd save by downgrading.`
+      : v.leverage >= 3
+        ? `Heavy use — your plan is paying off.`
+        : `Plan covers your usage.`
   const detectedNote = autoDetected
     ? `<div class="pb-auto">auto-detected · run \`codeburn plan\` to override</div>`
     : ''
@@ -483,7 +491,7 @@ function planBanner(v: NonNullable<MenubarPayload['valuation']>, autoDetected: b
       <span class="pb-d">what you actually pay</span>
       ${detectedNote}
     </div>
-    <div class="arrow">→ this period →</div>
+    <div class="arrow">over ${escapeHtml(periodLabel)} →</div>
     <div class="pb-cell">
       <span class="pb-l">API-equivalent value</span>
       <span class="pb-v">${formatUSD(v.apiValueUSD)}<small style="font-size:.6em;font-weight:500;opacity:.7"> · ${v.leverage.toFixed(1)}× leverage</small></span>
@@ -794,8 +802,10 @@ export function buildExportHtml(ctx: ExportContext): string {
     }))
   const providerTotal = providersColored.reduce((s, p) => s + p.value, 0)
 
-  // Period totals for stat cards
-  const totalTokens = current.inputTokens + current.outputTokens
+  // Period totals for stat cards. Total tokens = all four buckets (the basis
+  // cost is billed on); the old in+out-only figure hid ~95% of throughput on
+  // cache-heavy runs while the cost card beside it billed every bucket.
+  const totalTokens = current.inputTokens + current.outputTokens + current.cacheReadTokens + current.cacheWriteTokens
   const avgCostPerSession = current.sessions > 0 ? current.cost / current.sessions : 0
   const avgCostPerCall = current.calls > 0 ? current.cost / current.calls : 0
 
@@ -820,15 +830,15 @@ export function buildExportHtml(ctx: ExportContext): string {
   <div class="subtitle">payload schema v${payload.schemaVersion}</div>
 </header>
 
-${payload.valuation ? planBanner(payload.valuation, autoDetectedFromContext(ctx)) : noPlanHint(ctx.presenceOnly ?? [])}
+${payload.valuation ? planBanner(payload.valuation, autoDetectedFromContext(ctx), current.label) : noPlanHint(ctx.presenceOnly ?? [])}
 
 <section class="stat-grid">
   <div class="stat"><div class="v">${formatUSD(current.cost)}</div><div class="l">${payload.valuation ? 'API value' : 'API-equivalent spend'}</div><div class="delta">avg ${formatUSD(avgCostPerSession)}/session · ${formatUSD(avgCostPerCall, true)}/call</div></div>
   <div class="stat"><div class="v">${current.calls.toLocaleString()}</div><div class="l">API calls</div></div>
   <div class="stat"><div class="v">${current.sessions.toLocaleString()}</div><div class="l">Sessions</div></div>
-  <div class="stat"><div class="v">${formatTokens(totalTokens)}</div><div class="l">Tokens (in+out)</div><div class="delta">${formatTokens(current.outputTokens)} out · ${formatTokens(current.inputTokens)} in</div></div>
+  <div class="stat"><div class="v">${formatTokens(totalTokens)}</div><div class="l">Total tokens</div><div class="delta">${formatTokens(current.outputTokens)} out · ${formatTokens(current.inputTokens)} in · ${formatTokens(current.cacheReadTokens)} cached · ${formatTokens(current.cacheWriteTokens)} written</div></div>
   <div class="stat"><div class="v">${current.cacheHitPercent.toFixed(1)}%</div><div class="l">Cache hit rate</div></div>
-  <div class="stat"><div class="v">${current.oneShotRate != null ? Math.round(current.oneShotRate * 100) + '%' : '—'}</div><div class="l">One-shot rate</div><div class="delta">edits that landed first try</div></div>
+  <div class="stat"><div class="v">${current.oneShotRate != null ? Math.round(current.oneShotRate * 100) + '%' : '—'}</div><div class="l">One-shot rate</div><div class="delta">est. · edits not re-touched after a check</div></div>
 </section>
 
 <h2>Spend calendar ${spikes.length > 0 ? `<span class="count">${spikes.length} anomal${spikes.length === 1 ? 'y' : 'ies'} flagged</span>` : ''}</h2>

@@ -190,21 +190,26 @@ function countRetries(turn: ParsedTurn): number {
     }
   }
 
-  let sawEditBeforeBash = false
-  let sawBashAfterEdit = false
+  // A retry = returning to edit AFTER an intervening non-edit step (a test/run,
+  // a Read, a search…) — i.e. the model edited, went to check something, then
+  // came back and edited again. This broadens the old Bash-only trigger to any
+  // intervening tool (so Edit→Read→Edit rework is no longer scored as a clean
+  // one-shot), while deliberately NOT counting consecutive Edit→Edit steps,
+  // which are normal multi-file changes rather than rework.
+  let sawEdit = false
+  let sawOtherSinceEdit = false
   let retries = 0
 
   for (const tools of steps) {
     const hasEdit = tools.some(t => EDIT_TOOLS.has(t))
-    const hasBash = tools.some(t => BASH_TOOLS.has(t))
+    const hasOther = tools.some(t => !EDIT_TOOLS.has(t))
 
     if (hasEdit) {
-      if (sawBashAfterEdit) retries++
-      sawEditBeforeBash = true
-      sawBashAfterEdit = false
-    }
-    if (hasBash && sawEditBeforeBash) {
-      sawBashAfterEdit = true
+      if (sawOtherSinceEdit) retries++
+      sawEdit = true
+      sawOtherSinceEdit = false
+    } else if (sawEdit && hasOther) {
+      sawOtherSinceEdit = true
     }
   }
 

@@ -33,10 +33,11 @@ struct DailyHistoryEntry: Codable, Sendable {
     let cacheWriteTokens: Int
     let topModels: [DailyModelBreakdown]
 
-    /// Pricing-ratio prior: input + 5x output + cache_creation + 0.1x cache_read.
-    /// Matches Anthropic's published per-token pricing on Sonnet/Opus closely enough to be a useful proxy.
+    /// Pricing-ratio prior: input + 5x output + 1.25x cache_creation + 0.1x cache_read.
+    /// Matches Anthropic's published per-token pricing on Sonnet/Opus closely enough to be a useful proxy
+    /// (5-minute cache writes bill at 1.25x the base input rate, not 1x).
     var effectiveTokens: Double {
-        Double(inputTokens) + 5.0 * Double(outputTokens) + Double(cacheWriteTokens) + 0.1 * Double(cacheReadTokens)
+        Double(inputTokens) + 5.0 * Double(outputTokens) + 1.25 * Double(cacheWriteTokens) + 0.1 * Double(cacheReadTokens)
     }
 }
 
@@ -105,6 +106,8 @@ struct CurrentBlock: Codable, Sendable {
     let oneShotRate: Double?
     let inputTokens: Int
     let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
     let cacheHitPercent: Double
     let topActivities: [ActivityEntry]
     let topModels: [ModelEntry]
@@ -119,6 +122,7 @@ struct CurrentBlock: Codable, Sendable {
 extension CurrentBlock {
     enum CodingKeys: String, CodingKey {
         case label, cost, calls, sessions, oneShotRate, inputTokens, outputTokens,
+             cacheReadTokens, cacheWriteTokens,
              cacheHitPercent, topActivities, topModels, providers, topProjects,
              modelEfficiency, topSessions, retryTax, routingWaste
     }
@@ -135,6 +139,11 @@ extension CurrentBlock {
         oneShotRate = try c.decodeIfPresent(Double.self, forKey: .oneShotRate)
         inputTokens = try c.decode(Int.self, forKey: .inputTokens)
         outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        // decodeIfPresent so older CLI payloads (emitted before the cache-token
+        // fields were forwarded) still decode — they report 0 cache tokens until
+        // the CLI is updated, rather than failing the whole payload.
+        cacheReadTokens = try c.decodeIfPresent(Int.self, forKey: .cacheReadTokens) ?? 0
+        cacheWriteTokens = try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0
         cacheHitPercent = try c.decode(Double.self, forKey: .cacheHitPercent)
         topActivities = try c.decode([ActivityEntry].self, forKey: .topActivities)
         topModels = try c.decode([ModelEntry].self, forKey: .topModels)
@@ -151,7 +160,25 @@ struct ActivityEntry: Codable, Sendable {
     let name: String
     let cost: Double
     let turns: Int
+    /// Edit-turn count — the denominator behind `oneShotRate`. Lets the UI show
+    /// the sample size so a "100%" over a single edit isn't mistaken for a
+    /// strong signal. decodeIfPresent so older CLI payloads still decode.
+    let editTurns: Int
     let oneShotRate: Double?
+}
+
+extension ActivityEntry {
+    enum CodingKeys: String, CodingKey {
+        case name, cost, turns, editTurns, oneShotRate
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        cost = try c.decode(Double.self, forKey: .cost)
+        turns = try c.decode(Int.self, forKey: .turns)
+        editTurns = try c.decodeIfPresent(Int.self, forKey: .editTurns) ?? 0
+        oneShotRate = try c.decodeIfPresent(Double.self, forKey: .oneShotRate)
+    }
 }
 
 struct ModelEntry: Codable, Sendable {
@@ -235,6 +262,8 @@ extension MenubarPayload {
             oneShotRate: nil,
             inputTokens: 0,
             outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
             cacheHitPercent: 0,
             topActivities: [],
             topModels: [],
