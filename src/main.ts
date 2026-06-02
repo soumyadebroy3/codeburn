@@ -3,7 +3,7 @@ import { safeRunGit } from './git-safe.js'
 import { installMenubarApp } from './menubar-installer.js'
 import { installTrayApp } from './tray-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
-import { loadPricing, setModelAliases } from './models.js'
+import { getShortModelName, loadPricing, setModelAliases } from './models.js'
 import { parseAllSessions, filterProjectsByName, clearSessionCache } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
@@ -287,10 +287,20 @@ function buildDailyHistory(days: ReturnType<typeof aggregateProjectsIntoDays>) {
     outputTokens: d.outputTokens,
     cacheReadTokens: d.cacheReadTokens,
     cacheWriteTokens: d.cacheWriteTokens,
-    topModels: Object.entries(d.models).slice(0, 3).map(([n, m]) => ({
-      name: n, cost: m.cost, calls: m.calls,
-      inputTokens: m.inputTokens, outputTokens: m.outputTokens,
-    })),
+    // Merge raw model ids into friendly display names (claude-opus-4-8 ->
+    // Opus 4.8) and collapse dated/pinned variants before taking the top 3,
+    // so the trend tooltip shows clean names, not bare slugs.
+    topModels: (() => {
+      const merged = new Map<string, { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }>()
+      for (const [n, m] of Object.entries(d.models)) {
+        const name = getShortModelName(n)
+        const acc = merged.get(name) ?? { name, cost: 0, calls: 0, inputTokens: 0, outputTokens: 0 }
+        acc.cost += m.cost; acc.calls += m.calls
+        acc.inputTokens += m.inputTokens; acc.outputTokens += m.outputTokens
+        merged.set(name, acc)
+      }
+      return [...merged.values()].sort((a, b) => b.cost - a.cost).slice(0, 3)
+    })(),
   }))
 }
 
