@@ -37,7 +37,12 @@ const LAZY_PROVIDERS: readonly LazyProviderSpec[] = [
   { name: 'cursor-agent', load: () => import('./cursor-agent.js'), exportName: 'cursor_agent' },
   { name: 'crush',        load: () => import('./crush.js'),        exportName: 'crush' },
   { name: 'forge',        load: () => import('./forge.js'),        exportName: 'forge' },
-  { name: 'warp',         load: () => import('./warp.js'),         exportName: 'warp' },
+  // 'warp' is intentionally NOT registered in this fork. Opening Warp's group
+  // container (~/Library/Group Containers/2BBY89MBSN.dev.warp/.../warp.sqlite)
+  // trips macOS's "access data from other apps" prompt on every menubar
+  // refresh, and an ad-hoc-signed app can't persist the grant — so it nags
+  // endlessly. warp.ts and its tests are kept for a future opt-in / re-enable.
+  // Upstream (getagentseal/codeburn) still enables Warp.
 ]
 
 const lazyCache = new Map<string, Provider | null>()

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.6 - 2026-06-02
+
+### Changed
+- **Disabled the Warp provider.** Opening Warp's group container
+  (`~/Library/Group Containers/2BBY89MBSN.dev.warp/.../warp.sqlite`) trips
+  macOS's "access data from other apps" prompt on every menubar refresh, and an
+  ad-hoc-signed menubar app can't persist the grant — so it prompts endlessly
+  for no benefit when Warp's own AI agent isn't used. The provider is
+  unregistered; its parser and tests remain for a future opt-in. Upstream
+  (`getagentseal/codeburn`) still enables Warp — this is a fork-specific change.
+
 ## 2.4.5 - 2026-06-02
 
 ### Fixed
