@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.5 - 2026-06-02
+
+### Fixed
+- **`claude-opus-4-8` now displays as "Opus 4.8"** instead of falling back to the
+  bare "Opus 4" prefix — in the menubar, GNOME, Windows, the HTML report, and
+  the TUI dashboard's model breakdowns.
+- **Menubar/GNOME/Windows model rows show friendly names, not raw model slugs.**
+  The menubar payload's `topModels` and the trend tooltip's per-model names now
+  map raw ids to display names and collapse dated/pinned variants of the same
+  model into one row, instead of emitting ids like `claude-opus-4-8`.
+
 ## 2.4.4 - 2026-06-01
 
 Token-usage display now reflects real throughput, plus a sweep of
