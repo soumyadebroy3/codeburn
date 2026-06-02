@@ -54,6 +54,11 @@ describe('getShortModelName', () => {
   it('maps claude-opus-4-6 with date suffix', () => {
     expect(getShortModelName('claude-opus-4-6-20260205')).toBe('Opus 4.6')
   })
+
+  it('maps claude-opus-4-8 to Opus 4.8 (not the bare Opus 4 prefix)', () => {
+    expect(getShortModelName('claude-opus-4-8')).toBe('Opus 4.8')
+    expect(getShortModelName('claude-opus-4-8-20260601')).toBe('Opus 4.8')
+  })
 })
 
 describe('builtin aliases - getModelCosts', () => {

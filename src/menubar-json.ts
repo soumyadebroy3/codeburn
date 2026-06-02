@@ -19,6 +19,7 @@ export type ProviderCost = {
   cost: number
 }
 import type { OptimizeResult } from './optimize.js'
+import { getShortModelName } from './models.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
 const TOP_MODELS_LIMIT = 20
@@ -203,10 +204,23 @@ function buildTopActivities(categories: PeriodData['categories']): MenubarPayloa
 }
 
 function buildTopModels(models: PeriodData['models']): MenubarPayload['current']['topModels'] {
-  return models
-    .filter(m => m.name !== SYNTHETIC_MODEL_NAME)
+  // Aggregate by display name so raw model ids (e.g. claude-opus-4-8) render as
+  // friendly names (Opus 4.8) and version-pinned/dated variants of the same
+  // model collapse into one row. Day-level aggregation keys by raw id for
+  // accuracy; the friendly mapping happens here, at the display layer, so the
+  // menubar/GNOME/Windows UIs don't show bare model slugs.
+  const merged = new Map<string, { name: string; cost: number; calls: number }>()
+  for (const m of models) {
+    if (m.name === SYNTHETIC_MODEL_NAME) continue
+    const name = getShortModelName(m.name)
+    const acc = merged.get(name) ?? { name, cost: 0, calls: 0 }
+    acc.cost += m.cost
+    acc.calls += m.calls
+    merged.set(name, acc)
+  }
+  return [...merged.values()]
+    .sort((a, b) => b.cost - a.cost)
     .slice(0, TOP_MODELS_LIMIT)
-    .map(m => ({ name: m.name, cost: m.cost, calls: m.calls }))
 }
 
 function buildOptimize(optimize: OptimizeResult | null): MenubarPayload['optimize'] {
