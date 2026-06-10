@@ -14,9 +14,13 @@ function emptyEntry(date: string): DailyEntry {
     cacheWriteTokens: 0,
     editTurns: 0,
     oneShotTurns: 0,
-    models: {},
-    categories: {},
-    providers: {},
+    // Null-prototype maps: model/provider names come verbatim from untrusted
+    // transcripts, so a "__proto__"/"constructor" key must not resolve to
+    // Object.prototype and let `map[key] ?? {…}` bind-and-mutate the global
+    // prototype. Mirrors safeRecord() on the cache-load path (daily-cache.ts).
+    models: Object.create(null),
+    categories: Object.create(null),
+    providers: Object.create(null),
   }
 }
 
@@ -107,8 +111,9 @@ export function aggregateProjectsIntoDays(projects: ProjectSummary[]): DailyEntr
 export function buildPeriodDataFromDays(days: DailyEntry[], label: string): PeriodData {
   let cost = 0, calls = 0, sessions = 0
   let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0
-  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
-  const modelTotals: Record<string, { calls: number; cost: number }> = {}
+  // Null-prototype: keys (model names, categories) are untrusted. See emptyEntry.
+  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = Object.create(null)
+  const modelTotals: Record<string, { calls: number; cost: number }> = Object.create(null)
 
   for (const d of days) {
     cost += d.cost

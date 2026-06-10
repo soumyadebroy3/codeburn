@@ -500,8 +500,11 @@ program
 
 function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
   const sessions = projects.flatMap(p => p.sessions)
-  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
-  const modelTotals: Record<string, { calls: number; cost: number }> = {}
+  // Null-prototype maps: model names (and categories) are untrusted transcript
+  // strings, so a "__proto__"/"constructor" key must not bind to Object.prototype
+  // and pollute it via `if (!map[k]) …; map[k].x += …`. See daily-cache.safeRecord.
+  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = Object.create(null)
+  const modelTotals: Record<string, { calls: number; cost: number }> = Object.create(null)
   let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0
 
   for (const sess of sessions) {
@@ -630,7 +633,7 @@ program
           ...getDaysInRange(cache, rangeStartStr, yesterdayStr),
           ...todayDaysForProviders.filter(d => d.date === todayStr),
         ]
-        const providerTotals: Record<string, number> = {}
+        const providerTotals: Record<string, number> = Object.create(null) // untrusted keys; see buildPeriodData
         for (const d of allDaysForProviders) {
           for (const [name, p] of Object.entries(d.providers)) {
             providerTotals[name] = (providerTotals[name] ?? 0) + p.cost

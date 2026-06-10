@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.4.7 - 2026-06-10
+
+### Security
+- **Prototype-pollution hardening across all usage aggregation.** Model,
+  provider, tool, MCP-server and bash names are read verbatim from untrusted
+  transcripts and used as object keys. The daily aggregator, period builders,
+  TUI dashboard, and CSV exporter now bucket them in null-prototype maps, so a
+  `__proto__`/`constructor` key can no longer bind to `Object.prototype` and
+  corrupt it process-wide. Mirrors the existing cache-load guard; covered by a
+  new regression test.
+- **Terminal-escape injection blocked in the dashboard and CSV exports.**
+  Transcript-derived names could carry ANSI/OSC/BEL sequences (window-title
+  spoofing, OSC-8 phishing links, bell spam, cursor/screen control) that the
+  terminal would execute when rendered in the TUI or `cat`-ed from an exported
+  CSV. A shared `stripControlChars()` now sanitizes them at every terminal/file
+  sink.
+- **Supply chain: all GitHub Actions are SHA-pinned.** Previously floating tags
+  (`@v2`, `@stable`) — including in the OIDC-privileged npm publish job — are now
+  pinned to full commit SHAs. The CycloneDX SBOM step is version-pinned and runs
+  with `--ignore-scripts`. Dependabot is now configured (it was an inert
+  placeholder) to keep the pins and npm/cargo dependencies current.
+- **Removed the auto-executing IDE-config surface.** Dropped the Gemini hooks
+  that ran repo-committed shell scripts on session open, stripped hardcoded
+  foreign developer paths from the Cursor/Kiro/Qoder/Gemini MCP configs, and
+  stopped tracking `.mcp.json` / `.opencode.json` so clones no longer ship an
+  auto-start MCP server surface.
+
 ## 2.4.6 - 2026-06-02
 
 ### Changed

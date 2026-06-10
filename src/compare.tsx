@@ -3,7 +3,7 @@ import { render, Box, Text, useInput, useApp, useStdout } from 'ink'
 
 import type { ModelStats, ComparisonRow, CategoryComparison, WorkingStyleRow } from './compare-stats.js'
 import { aggregateModelStats, computeComparison, computeCategoryComparison, computeWorkingStyle, scanSelfCorrections } from './compare-stats.js'
-import { formatCost } from './format.js'
+import { formatCost, stripControlChars } from './format.js'
 import { parseAllSessions } from './parser.js'
 import { getAllProviders } from './providers/index.js'
 import type { ProjectSummary, DateRange } from './types.js'
@@ -36,7 +36,9 @@ function formatValue(value: number | null, fmt: ComparisonRow['formatFn']): stri
 }
 
 function shortName(model: string): string {
-  return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
+  // Model names come verbatim from untrusted transcripts; strip ANSI/control
+  // chars so escape sequences can't reach the terminal via the compare view.
+  return stripControlChars(model).replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }
 
 function daysOfData(first: string, last: string): number {

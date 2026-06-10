@@ -27,7 +27,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -39,7 +39,7 @@ jobs:
         # No `registry-url` — Trusted Publishing requires NO authToken in
         # .npmrc, otherwise npm uses the (empty) NODE_AUTH_TOKEN placeholder
         # setup-node would inject and bypasses the OIDC flow.
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24'
           cache: 'npm'
@@ -75,9 +75,15 @@ jobs:
         run: npm run build
 
       - name: Generate SBOM (CycloneDX)
+        # Pinned exact version + --ignore-scripts: this step runs INSIDE the
+        # id-token:write publish job, so an unpinned install (or a lifecycle
+        # script in cyclonedx-npm or any transitive dep) could run arbitrary
+        # code with access to the npm OIDC publish credential. Pinning the
+        # version removes the floating-resolution vector and --ignore-scripts
+        # stops a compromised dep from executing during install.
         run: |
-          npm install --no-save @cyclonedx/cyclonedx-npm
-          npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file codeburn-sbom.cdx.json
+          npm install --no-save --ignore-scripts @cyclonedx/cyclonedx-npm@4.2.1
+          npx --no-install @cyclonedx/cyclonedx-npm --output-format JSON --output-file codeburn-sbom.cdx.json
           echo "SBOM bytes: $(wc -c < codeburn-sbom.cdx.json)"
 
       - name: Publish to npm with provenance (Trusted Publishing / OIDC)
@@ -102,7 +108,7 @@ jobs:
 
       - name: Attach SBOM to GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           files: codeburn-sbom.cdx.json
@@ -124,7 +130,7 @@ jobs:
     steps:
       - name: Mint GitHub App installation token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
@@ -155,7 +161,7 @@ jobs:
           echo "  SHA-256: $SHA"
 
       - name: Checkout homebrew tap
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: soumyadebroy3/homebrew-codeburn
           token: ${{ steps.app-token.outputs.token }}
