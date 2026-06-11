@@ -64,7 +64,7 @@ struct AgentTabStrip: View {
                             }
                         )
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, Theme.bodyGutter)
                     .padding(.top, 8)
                     .padding(.bottom, 4)
                     .onHover { hovering in
@@ -109,11 +109,11 @@ struct AgentTabStrip: View {
     }
 
     private var todayAll: MenubarPayload {
-        store.todayPayload ?? store.payload
+        store.todayPayload ?? store.currentPayload
     }
 
     private var periodAll: MenubarPayload {
-        store.periodAllPayload ?? store.payload
+        store.periodAllPayload ?? store.currentPayload
     }
 
     private var visibleFilters: [ProviderFilter] {
@@ -130,7 +130,7 @@ struct AgentTabStrip: View {
         let data = periodAll
         if filter == .all { return data.current.cost }
         if filter == store.selectedProvider, store.hasCachedData {
-            return store.payload.current.cost
+            return store.currentPayload.current.cost
         }
         let providers = Dictionary(
             data.current.providers.map { ($0.key.lowercased(), $0.value) },
@@ -292,10 +292,13 @@ private struct AgentTabQuotaBar: View {
                 if case .terminalFailure = quota?.connection {
                     // Hatched/red strip to telegraph "broken; reconnect needed".
                     Capsule()
-                        .fill(Color.red.opacity(0.7))
+                        .fill(Theme.semanticDanger.opacity(0.7))
                 }
             }
         }
+        .accessibilityElement()
+        .accessibilityLabel("Quota")
+        .accessibilityValue(filledFraction.map { "\(Int($0 * 100)) percent" } ?? "unknown")
     }
 
     private var filledFraction: Double? {
@@ -305,11 +308,14 @@ private struct AgentTabQuotaBar: View {
 
     private var barColor: Color {
         guard let pct = quota?.primary?.percent else { return .clear }
+        // Source from the design system's semantic palette (tuned to sit with
+        // the terracotta accent) instead of raw .green/.yellow/.red — the raw
+        // green next to the accent read as a second, unexplained accent.
         switch QuotaSummary.severity(for: pct) {
-        case .normal:   return isActive ? Color.white : Color.green.opacity(0.85)
-        case .warning:  return Color.yellow
-        case .critical: return Color.orange
-        case .danger:   return Color.red
+        case .normal:   return isActive ? Color.white : Theme.semanticSuccess
+        case .warning:  return Theme.semanticWarning
+        case .critical: return Color.orange   // escalation step between warning and danger
+        case .danger:   return Theme.semanticDanger
         }
     }
 

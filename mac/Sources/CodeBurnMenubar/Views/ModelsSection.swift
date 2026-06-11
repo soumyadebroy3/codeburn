@@ -14,13 +14,16 @@ struct ModelsSection: View {
                     Text("Calls").frame(minWidth: 52, alignment: .trailing)
                 }
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .tracking(-0.05)
             }
         ) {
             VStack(alignment: .leading, spacing: 7) {
-                let maxCost = store.payload.current.topModels.map(\.cost).max() ?? 1
-                ForEach(store.payload.current.topModels, id: \.name) { model in
+                let maxCost = store.currentPayload.current.topModels.map(\.cost).max() ?? 1
+                // enumerated offset id: under .all aggregation two model rows can
+                // share a name (same model across providers), which collapsed
+                // rows with id: \.name.
+                ForEach(Array(store.currentPayload.current.topModels.enumerated()), id: \.offset) { _, model in
                     ModelRow(model: model, maxCost: maxCost)
                 }
 
@@ -64,7 +67,7 @@ private struct TokensLine: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        let t = store.payload.current
+        let t = store.currentPayload.current
         let cacheHit = String(format: "%.0f", t.cacheHitPercent)
 
         HStack(spacing: 4) {

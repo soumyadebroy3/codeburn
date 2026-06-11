@@ -9,20 +9,24 @@ struct MenuBarContent: View {
         VStack(spacing: 0) {
             Header()
 
-            Divider()
+            Divider().opacity(0.5)
 
             if showAgentTabs {
                 AgentTabStrip()
-                Divider()
+                Divider().opacity(0.5)
             }
 
             ZStack {
+                if isFreshInstall {
+                    FirstRunState()
+                        .transition(.opacity)
+                } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         HeroSection()
-                        Divider().opacity(0.5)
+                        InsetSeparator()
                         PeriodSegmentedControl()
-                        Divider().opacity(0.5)
+                        InsetSeparator()
                         if isFilteredEmpty {
                             EmptyProviderState(provider: store.selectedProvider, period: store.selectedPeriod)
                         } else {
@@ -31,14 +35,15 @@ struct MenuBarContent: View {
                                 .padding(.top, 10)
                                 .padding(.bottom, 10)
                                 .zIndex(10)
-                            Divider().opacity(0.5)
+                            InsetSeparator()
                             ActivitySection()
-                            Divider().opacity(0.5)
+                            InsetSeparator()
                             ModelsSection()
-                            Divider().opacity(0.5)
+                            InsetSeparator()
                             FindingsSection()
                         }
                     }
+                }
                 }
 
                 // Overlay fires only on cold cache for the current key. Three
@@ -76,17 +81,38 @@ struct MenuBarContent: View {
             .frame(height: 520)
             .animation(.easeInOut(duration: 0.2), value: store.isLoading)
 
-            Divider()
+            Divider().opacity(0.5)
 
             FooterBar()
 
             StarBanner()
         }
+        // One short, intentional accent wash at the very top replaces the
+        // muddy full-height bleed. Sits over the popover's native material,
+        // fades to clear by ~110pt, and is accent-agnostic across presets.
+        .background(alignment: .top) {
+            LinearGradient(colors: [Theme.brandAccent.opacity(0.05), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 110)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// A genuinely fresh install: the CLI ran and found no AI tools / no usage
+    /// at all, and we're not mid-load or in an error state. Distinct from a
+    /// provider-filtered empty view (which still has providers in cache).
+    private var isFreshInstall: Bool {
+        store.hasCachedData
+            && !store.hasAnyProvidersInCache
+            && store.currentPayload.current.cost == 0
+            && store.currentPayload.current.calls == 0
+            && store.lastError == nil
+            && !store.isCurrentKeyLoading
     }
 
     private var isFilteredEmpty: Bool {
         guard store.selectedProvider != .all else { return false }
-        if store.payload.current.cost > 0 || store.payload.current.calls > 0 { return false }
+        if store.currentPayload.current.cost > 0 || store.currentPayload.current.calls > 0 { return false }
         if providerHasCostInAllPayload { return false }
         return true
     }
@@ -110,10 +136,31 @@ struct MenuBarContent: View {
         // visible. Without this, the strip disappears for one frame on a period
         // switch when the new key's payload is still empty.
         if store.hasAnyProvidersInCache { return true }
-        let payload = store.todayPayload ?? store.payload
+        let payload = store.todayPayload ?? store.currentPayload
         return !payload.current.providers.isEmpty
     }
 
+}
+
+/// Welcome card shown to a brand-new user before any AI tool usage is detected,
+/// instead of a dead dashboard of zeros.
+private struct FirstRunState: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            FlameMark(size: 42)
+            Text("Start tracking your AI spend")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
+            Text("CodeBurn automatically picks up usage from Claude Code, Cursor, Codex, Copilot, Gemini and more — just keep coding and your costs will show up here.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
 }
 
 private struct EmptyProviderState: View {
@@ -188,13 +235,31 @@ private struct FetchErrorOverlay: View {
     }
 }
 
-/// Translucent overlay that blurs whatever's behind it (the previous tab/period content)
-/// and centers an animated burning flame -- the brand mark filling up bottom-to-top in
-/// yellow→orange→red, looping.
+/// Inset hairline between in-body sections — softer and more macOS-native than
+/// an edge-to-edge full-opacity Divider.
+private struct InsetSeparator: View {
+    var body: some View {
+        // Hairline that fades toward its inset ends, so it reads as a soft groove
+        // dissolving into the surface rather than a hard ruled line.
+        Rectangle()
+            .fill(LinearGradient(
+                colors: [.primary.opacity(0), .primary.opacity(0.08), .primary.opacity(0)],
+                startPoint: .leading, endPoint: .trailing))
+            .frame(height: 1)
+            .padding(.horizontal, Theme.bodyGutter)
+    }
+}
+
+/// Translucent overlay that blurs whatever's behind it (the previous tab/period
+/// content) and centers the animated burning flame — the brand mark filling
+/// bottom-to-top in yellow→orange→red, looping. Honors Reduce Motion by showing
+/// the flame statically filled instead of looping.
 private struct BurnLoadingOverlay: View {
     let periodLabel: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var fillProgress: CGFloat = 0
     @State private var glowing: Bool = false
+    @State private var flicker: CGFloat = 0
 
     private let flameSize: CGFloat = 64
 
@@ -205,18 +270,32 @@ private struct BurnLoadingOverlay: View {
                 .fill(.ultraThinMaterial)
 
             VStack(spacing: 14) {
-                BurnFlame(size: flameSize, fillProgress: fillProgress, glowing: glowing)
+                BurnFlame(size: flameSize, fillProgress: fillProgress, glowing: glowing, flicker: flicker)
                 Text("Loading \(periodLabel)…")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(.secondary)
             }
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                fillProgress = 1.0
+            // Reduce Motion: skip the loop, show the flame fully lit so it still
+            // reads as the brand mark.
+            guard !reduceMotion else { fillProgress = 1.0; return }
+            // Ignite from cold once…
+            withAnimation(.easeOut(duration: 0.5)) { fillProgress = 1.0 }
+            // …then breathe between half- and full-lit (never drains to empty
+            // the way the old 0↔1 loop did, which read as "filling and draining").
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
+                    fillProgress = 0.55
+                }
             }
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+            // Outer-glow breathing + a faster, subtler candle flicker, out of
+            // phase with the fill so the motion reads organic rather than pulsed.
+            withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
                 glowing = true
+            }
+            withAnimation(.easeInOut(duration: 0.32).repeatForever(autoreverses: true)) {
+                flicker = 1
             }
         }
     }
@@ -226,14 +305,15 @@ private struct BurnFlame: View {
     let size: CGFloat
     let fillProgress: CGFloat
     let glowing: Bool
+    var flicker: CGFloat = 0
 
     var body: some View {
         ZStack {
             // Soft outer glow that pulses, matching the brand terracotta palette.
             Image(systemName: "flame.fill")
                 .font(.system(size: size, weight: .regular))
-                .foregroundStyle(Theme.brandAccentGlow.opacity(glowing ? 0.55 : 0.20))
-                .blur(radius: glowing ? 14 : 6)
+                .foregroundStyle(Theme.brandAccentGlow.opacity(glowing ? 0.6 : 0.22))
+                .blur(radius: glowing ? 16 : 7)
 
             // Empty (cool) flame as base
             Image(systemName: "flame")
@@ -264,6 +344,10 @@ private struct BurnFlame: View {
                 )
         }
         .frame(width: size, height: size)
+        // Candle flicker: a slight width squeeze + tip rise + brightness dip,
+        // anchored at the base so the flame "licks" in place without drifting.
+        .scaleEffect(x: 1 - flicker * 0.04, y: 1 + flicker * 0.02, anchor: .bottom)
+        .opacity(0.9 + (1 - flicker) * 0.1)
     }
 }
 
@@ -273,16 +357,21 @@ private struct Header: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    (
-                        Text("Code").foregroundStyle(.primary)
-                        + Text("Burn").foregroundStyle(Theme.brandEmber)
-                    )
-                    .font(.system(size: 13, weight: .semibold))
-                    .tracking(-0.15)
-                    Text("AI Coding Cost Tracker")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 7) {
+                    // Brand color lives in the FlameMark (accent-driven via
+                    // brandAccentLight→Deep), so the lockup tracks the chosen
+                    // preset. The wordmark is monochrome — the old two-tone
+                    // "Burn" was hardcoded terracotta and ignored 8 of 9 themes.
+                    FlameMark(bounceToken: store.currentPayload.generated)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("CodeBurn")
+                            .font(.system(size: 13, weight: .semibold))
+                            .tracking(-0.15)
+                            .foregroundStyle(.primary)
+                        Text("AI Coding Cost Tracker")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if updateChecker.updateAvailable || updateChecker.updateError != nil {
@@ -312,6 +401,7 @@ private struct QuotaWarningRow: View {
                     .foregroundStyle(severityColor)
                 Text(message)
                     .font(.system(size: 10.5, weight: .medium))
+                    .monospacedDigit()
                     .foregroundStyle(severityColor)
                 Spacer(minLength: 0)
             }
@@ -395,15 +485,23 @@ private struct AccentPicker: View {
                     store.showingAccentPicker.toggle()
                 }
             } label: {
-                Circle()
-                    .fill(store.accentPreset.base)
-                    .frame(width: 14, height: 14)
-                    .overlay(
-                        Circle()
-                            .stroke(.white.opacity(0.3), lineWidth: 0.5)
-                    )
+                // Palette glyph + swatch in a capsule so it reads as a theme
+                // control, not a meaningless status dot.
+                HStack(spacing: 4) {
+                    Image(systemName: "paintpalette")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Circle()
+                        .fill(store.accentPreset.base)
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.secondary.opacity(0.10)))
             }
             .buttonStyle(.plain)
+            .help("Theme color")
             .accessibilityLabel("Change accent color")
             .padding(.leading, 4)
         }
@@ -412,6 +510,7 @@ private struct AccentPicker: View {
 
 private struct UpdateBadge: View {
     @Environment(UpdateChecker.self) private var updateChecker
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -437,6 +536,11 @@ private struct UpdateBadge: View {
                 } else {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 10))
+                        // Bounce once when an update appears. Keying on a constant
+                        // under Reduce Motion means the value never changes, so it
+                        // never animates. (.repeat(.periodic) is macOS 15+; this
+                        // one-shot form is macOS 14+.)
+                        .symbolEffect(.bounce, value: reduceMotion ? false : updateChecker.updateAvailable)
                 }
                 Text(badgeLabel)
                     .font(.system(size: 10, weight: .medium))
@@ -459,9 +563,16 @@ private struct UpdateBadge: View {
 }
 
 struct FlameMark: View {
+    var size: CGFloat = 18
+    /// Change this to make the flame give one "burn" bounce (e.g. pass the
+    /// payload's `generated` token so the header mark pulses on fresh data).
+    /// Default "" never changes, so the static About-tab mark never bounces.
+    var bounceToken: String = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [Theme.brandAccentLight, Theme.brandAccentDeep],
@@ -469,11 +580,13 @@ struct FlameMark: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .shadow(color: .black.opacity(0.2), radius: 1, y: 0.5)
+                .shadow(color: .black.opacity(0.2), radius: size * 0.06, y: 0.5)
             Image(systemName: "flame.fill")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: size * 0.62, weight: .semibold))
                 .foregroundStyle(.white)
+                .symbolEffect(.bounce, value: reduceMotion ? "" : bounceToken)
         }
+        .frame(width: size, height: size)
     }
 }
 
@@ -521,7 +634,7 @@ struct StarBanner: View {
                 .buttonStyle(.plain)
                 .help("Hide this banner")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, Theme.bodyGutter)
             .padding(.vertical, 6)
             .background(Theme.brandAccent.opacity(0.08))
             .overlay(alignment: .top) {
@@ -567,10 +680,21 @@ struct FooterBar: View {
                 // to the spinner glyph (driven by store.isLoading), giving the
                 // user visible feedback the click was registered, but the
                 // popover body keeps the existing data instead of blanking out.
+                Haptics.tap()
                 Task { await store.refresh(includeOptimize: false, force: true, showLoading: true) }
             } label: {
-                Image(systemName: store.isLoading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-                    .font(.system(size: 11, weight: .medium))
+                // Native indeterminate spinner while loading; static arrow otherwise.
+                // (A hand-rolled .repeatForever rotation could stick spinning even
+                // after loading ended — ProgressView starts/stops cleanly.)
+                if store.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.6)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -596,7 +720,7 @@ struct FooterBar: View {
                 .font(.system(size: 10, weight: .regular, design: .monospaced))
                 .foregroundStyle(.tertiary)
 
-            Button { openReport() } label: {
+            Button { Haptics.tap(); openReport() } label: {
                 Label("Full Report", systemImage: "terminal")
                     .font(.system(size: 11, weight: .semibold))
                     .labelStyle(.titleAndIcon)
@@ -605,7 +729,7 @@ struct FooterBar: View {
             .controlSize(.small)
             .tint(Theme.brandAccent)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, Theme.bodyGutter)
         .padding(.vertical, 8)
     }
 

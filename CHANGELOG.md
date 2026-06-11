@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.4.8 - 2026-06-11
+
+A large macOS menubar overhaul — performance, a best-in-class visual + motion
+pass, and several sleep/wake and interaction bug fixes.
+
+### Performance
+- **CLI parses today's transcripts once per `--all` call** instead of three
+  times. Each of the current-period / providers / history blocks built its own
+  `todayRange` with a fresh `new Date()`, so `parseAllSessions`'s in-process
+  cache key never matched and today's JSONL was cold-parsed three times — the
+  single most-spawned menubar command.
+- **Menubar payload decoupled from the cache dictionary.** Views read a stored
+  `currentPayload`, so a quiet 30s background write (or a parallel all-provider
+  fetch) no longer re-evaluates the entire popover under @Observable.
+- **Stats and Findings analytics memoized** (recompute only on payload/currency
+  change, not every redraw); the Stats tab's ~400-iteration streak loop and the
+  Findings tip computation no longer run on every body eval. Shared cached
+  `Calendar`/`DateFormatter` in Findings.
+- Suppressed a duplicate all-provider CLI spawn on tab switches; added a 150ms
+  switch debounce, popover-open prefetch of the common periods, and made the
+  30s tick respect the 30s cache TTL.
+
+### Fixed
+- **Popover no longer closes when clicking the Claude/Codex tabs** (their nested
+  quota hover-popover tripped `.transient`); switched to `.applicationDefined`
+  with a global outside-click monitor.
+- **Refresh button no longer spins forever** — replaced a stuck-prone custom
+  rotation with the native spinner and added a wedged-loading guard.
+- **Auto-fetches after a long sleep.** Opening the popover now recovers a dead
+  refresh loop / wedged loading and pulls fresh data if it has gone stale.
+- Switching providers no longer animates the trend bars down-then-up.
+
+### Changed (visual + motion)
+- Redesigned the trend chart (gradient top-rounded bars, today/peak emphasis,
+  refined average line, headroom scaling, empty state, **staggered bar-rise**
+  entrance), header (accent-driven FlameMark + monochrome wordmark + palette
+  control), hero (flat fill, accent bloom, rolling `numericText` figure), and
+  unified the three selector rows with sliding selection + press feedback.
+- Inline **14-day sparkline** in the hero; **first-run welcome state**; live
+  right-click status-item menu (today's spend + quota); **variable-value
+  menubar flame** that fills with the day's burn (macOS 15+).
+- Depth/typography pass (elevated tiles, fade-to-end separators, one content
+  gutter, consistent type ramp, `monospacedDigit` on live counters), SF Symbol
+  effects, haptics on commit actions, pointing-hand cursors, insight-tab
+  cross-fade, and cost bars that grow from 0.
+- Full accessibility pass: every animation honors Reduce Motion; VoiceOver
+  labels/values/traits and Increase-Contrast-aware captions.
+
 ## 2.4.7 - 2026-06-10
 
 ### Security
