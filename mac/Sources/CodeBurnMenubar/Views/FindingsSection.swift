@@ -1,33 +1,48 @@
 import SwiftUI
 
+// Cached calendar + formatter, reused across computeHistoryStats calls instead
+// of allocating a fresh Calendar/DateFormatter every invocation (the same
+// hot-path anti-pattern HeatmapSection already cured with its file-level pair).
+private let findingsCalendar: Calendar = {
+    var c = Calendar(identifier: .gregorian)
+    c.timeZone = .current
+    return c
+}()
+private let findingsDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    f.timeZone = .current
+    return f
+}()
 
 /// Three-category insights panel: wins, improvements, risks.
 /// Wins/risks are derived from current + history; improvements come from the optimize findings.
 struct FindingsSection: View {
     @Environment(AppStore.self) private var store
     @State private var isExpanded: Bool = true
+    @State private var groups: [TipGroup] = []
 
     var body: some View {
-        let groups = computeTipGroups(payload: store.payload)
-        if groups.allSatisfy({ $0.items.isEmpty }) { return AnyView(EmptyView()) }
-
-        return AnyView(
+        Group {
+            if !groups.allSatisfy({ $0.items.isEmpty }) {
             VStack(alignment: .leading, spacing: 8) {
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
                 } label: {
                     HStack(alignment: .firstTextBaseline) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             Image(systemName: "lightbulb.fill")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(Theme.brandAccent)
                             Text("Tips for you")
-                                .font(.system(size: 12.5, weight: .semibold))
-                                .foregroundStyle(.primary)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .tracking(-0.1)
+                                .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text("\(groups.flatMap { $0.items }.count) signals")
                             .font(.system(size: 10.5))
+                            .monospacedDigit()
                             .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
@@ -47,7 +62,7 @@ struct FindingsSection: View {
                             }
                         }
 
-                        if store.payload.optimize.findingCount > 0 {
+                        if store.currentPayload.optimize.findingCount > 0 {
                             Button {
                                 openOptimize()
                             } label: {
@@ -72,7 +87,14 @@ struct FindingsSection: View {
             )
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-        )
+            }
+        }
+        // Memoized: computeTipGroups walks history and builds tip strings
+        // (including currency), so recompute only when the payload identity or
+        // display currency changes — not on every body eval.
+        .task(id: "\(store.currentPayload.generated)|\(CurrencyState.shared.rate)") {
+            groups = computeTipGroups(payload: store.currentPayload)
+        }
     }
 
     private func openOptimize() {
@@ -212,14 +234,8 @@ private struct HistoryStats {
 }
 
 private func computeHistoryStats(history: [DailyHistoryEntry]) -> HistoryStats {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = .current
-    let formatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = .current
-        return f
-    }()
+    let calendar = findingsCalendar
+    let formatter = findingsDateFormatter
     let now = Date()
     let today = calendar.startOfDay(for: now)
     let costByDate = Dictionary(history.map { ($0.date, $0.cost) }, uniquingKeysWith: +)

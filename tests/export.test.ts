@@ -137,7 +137,7 @@ describe('exportCsv', () => {
     expect(content).toContain("'@malicious")
   })
 
-  it('escapes tab and carriage-return prefixes in CSV cells', async () => {
+  it('strips tab/carriage-return (and other) control chars from CSV cells', async () => {
     const periods: PeriodExport[] = [
       {
         label: '30 Days',
@@ -148,8 +148,31 @@ describe('exportCsv', () => {
     const outputPath = join(tmpDir, 'tab-cr.csv')
     const folder = await exportCsv(periods, outputPath)
     const projects = await readFile(join(folder, 'projects.csv'), 'utf-8')
-    expect(projects).toContain("'\tcmd")
-    expect(projects).toContain("'\rcmd")
+    // Control chars are now removed entirely (stronger than the old "'"-prefix
+    // guard): a user who `cat`s the CSV can't be hit by embedded \t/\r or ANSI
+    // escape bytes carried in transcript-derived names. rowsToCsv uses \n line
+    // endings, so no \r/\t should survive anywhere in the file.
+    expect(projects).toContain('cmd')
+    expect(projects).not.toContain('\t')
+    expect(projects).not.toContain('\r')
+    expect(projects).not.toContain("'\tcmd")
+    expect(projects).not.toContain("'\rcmd")
+  })
+
+  it('strips ANSI/OSC escape sequences from CSV cells (terminal-injection guard)', async () => {
+    const ESC = String.fromCharCode(0x1b)
+    const BEL = String.fromCharCode(0x07)
+    // OSC window-title hijack + CSI screen-clear wrapped around a project name.
+    const evil = `${ESC}]0;HIJACK${BEL}proj${ESC}[2J`
+    const periods: PeriodExport[] = [
+      { label: '30 Days', projects: [makeProject(evil)] },
+    ]
+
+    const folder = await exportCsv(periods, join(tmpDir, 'ansi.csv'))
+    const projects = await readFile(join(folder, 'projects.csv'), 'utf-8')
+    expect(projects).toContain('proj')
+    expect(projects).not.toContain(ESC)
+    expect(projects).not.toContain(BEL)
   })
 
   it('includes per-model efficiency metrics', async () => {

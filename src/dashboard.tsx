@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { render, Box, Text, useInput, useApp, useWindowSize } from 'ink'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
-import { formatCost, formatTokens } from './format.js'
+import { formatCost, formatTokens, stripControlChars } from './format.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { parseAllSessions, filterProjectsByName } from './parser.js'
 import { loadPricing } from './models.js'
@@ -141,7 +141,12 @@ function Panel({ title, color, children, width }: { title: string; color: string
 }
 
 function fit(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) : s.padEnd(n)
+  // Sanitize BEFORE measuring/truncating: model/tool/MCP/project names come from
+  // untrusted transcripts. Ink strips CSI but preserves OSC/BEL, so an injected
+  // window-title/hyperlink escape would otherwise reach the terminal. Stripping
+  // first also fixes width accounting (escape bytes no longer count toward n).
+  const clean = stripControlChars(s)
+  return clean.length > n ? clean.slice(0, n) : clean.padEnd(n)
 }
 
 function renderPlanBar(percentUsed: number, width: number): string {
@@ -314,7 +319,10 @@ const MODEL_NAME_WIDTH = 14
 const MIN_EDIT_TURNS_FOR_RATE = 5
 
 function ModelBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: number; bw: number }) {
-  const modelTotals: Record<string, { calls: number; costUSD: number; freshInput: number; cacheRead: number; cacheWrite: number }> = {}
+  // Null-prototype maps throughout this file: keys (model/tool/MCP/bash names)
+  // come from untrusted transcripts; a plain {} would let "__proto__"/"constructor"
+  // keys pollute Object.prototype. See daily-cache.safeRecord / day-aggregator.
+  const modelTotals: Record<string, { calls: number; costUSD: number; freshInput: number; cacheRead: number; cacheWrite: number }> = Object.create(null)
   const modelEfficiency = aggregateModelEfficiency(projects)
   for (const project of projects) {
     for (const session of project.sessions) {
@@ -360,8 +368,8 @@ function ModelBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: 
 const SKILL_SUB_ROWS_LIMIT = 5
 
 function ActivityBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: number; bw: number }) {
-  const categoryTotals: Record<string, { turns: number; costUSD: number; editTurns: number; oneShotTurns: number }> = {}
-  const skillTotals: Record<string, { turns: number; costUSD: number; editTurns: number; oneShotTurns: number }> = {}
+  const categoryTotals: Record<string, { turns: number; costUSD: number; editTurns: number; oneShotTurns: number }> = Object.create(null)
+  const skillTotals: Record<string, { turns: number; costUSD: number; editTurns: number; oneShotTurns: number }> = Object.create(null)
   for (const project of projects) {
     for (const session of project.sessions) {
       for (const [cat, data] of Object.entries(session.categoryBreakdown)) {
@@ -418,7 +426,7 @@ function ActivityBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; p
 }
 
 function ToolBreakdown({ projects, pw, bw, title, filterPrefix }: { projects: ProjectSummary[]; pw: number; bw: number; title?: string; filterPrefix?: string }) {
-  const toolTotals: Record<string, number> = {}
+  const toolTotals: Record<string, number> = Object.create(null)
   for (const project of projects) {
     for (const session of project.sessions) {
       for (const [tool, data] of Object.entries(session.toolBreakdown)) {
@@ -487,7 +495,7 @@ function TopSessions({ projects, pw, bw }: { projects: ProjectSummary[]; pw: num
 }
 
 function McpBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: number; bw: number }) {
-  const mcpTotals: Record<string, number> = {}
+  const mcpTotals: Record<string, number> = Object.create(null)
   for (const project of projects) { for (const session of project.sessions) { for (const [server, data] of Object.entries(session.mcpBreakdown)) { mcpTotals[server] = (mcpTotals[server] ?? 0) + data.calls } } }
   const sorted = Object.entries(mcpTotals).sort(([, a], [, b]) => b - a)
   if (sorted.length === 0) return <Panel title="MCP Servers" color={PANEL_COLORS.mcp} width={pw}><Text dimColor>No MCP usage</Text></Panel>
@@ -504,7 +512,7 @@ function McpBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: nu
 }
 
 function BashBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: number; bw: number }) {
-  const bashTotals: Record<string, number> = {}
+  const bashTotals: Record<string, number> = Object.create(null)
   for (const project of projects) { for (const session of project.sessions) { for (const [cmd, data] of Object.entries(session.bashBreakdown)) { bashTotals[cmd] = (bashTotals[cmd] ?? 0) + data.calls } } }
   const sorted = Object.entries(bashTotals).sort(([, a], [, b]) => b - a)
   if (sorted.length === 0) return <Panel title="Shell Commands" color={PANEL_COLORS.bash} width={pw}><Text dimColor>No shell commands</Text></Panel>

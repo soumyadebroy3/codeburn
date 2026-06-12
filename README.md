@@ -113,6 +113,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/goose.png" width="28" /> | Goose | Yes | [goose.md](docs/providers/goose.md) |
 | <img src="assets/providers/antigravity.png" width="28" /> | Antigravity | Yes | [antigravity.md](docs/providers/antigravity.md) |
 | <img src="assets/providers/crush.png" width="28" /> | Crush | Yes | [crush.md](docs/providers/crush.md) |
+| | Mux (coder) | Yes | [mux.md](docs/providers/mux.md) |
 
 Paths shown are for macOS. Linux and Windows equivalents are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/soumyadebroy3/codeburn/issues).
 
@@ -266,6 +267,7 @@ Subscription tracking for Claude Pro, Claude Max, and Cursor Pro. The dashboard 
 codeburn currency GBP          # set to British Pounds
 codeburn currency AUD          # set to Australian Dollars
 codeburn currency JPY          # set to Japanese Yen
+codeburn currency CNY          # set to Chinese Yuan
 codeburn currency              # show current setting
 codeburn currency --reset      # back to USD
 ```

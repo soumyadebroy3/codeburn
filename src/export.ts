@@ -5,9 +5,15 @@ import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory } from './types
 import { getCurrency, convertCost, roundForActiveCurrency } from './currency.js'
 import { dateKey } from './day-aggregator.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
+import { stripControlChars } from './format.js'
 
 function escCsv(s: string): string {
-  const sanitized = /^[\t\r=+\-@]/.test(s) ? `'${s}` : s
+  // Strip ANSI/control chars first: model/tool/project cells come from untrusted
+  // transcripts, and a user who `cat`s the CSV in a terminal would otherwise let
+  // injected escape sequences (cursor moves, OSC title/hyperlink) execute.
+  const clean = stripControlChars(s)
+  // Then neutralise spreadsheet formula-injection on the cleaned value.
+  const sanitized = /^[=+\-@]/.test(clean) ? `'${clean}` : clean
   if (sanitized.includes(',') || sanitized.includes('"') || sanitized.includes('\n')) {
     return `"${sanitized.replaceAll('"', '""')}"`
   }
@@ -81,7 +87,10 @@ function buildDailyRows(projects: ProjectSummary[], period: string): Row[] {
 }
 
 function buildActivityRows(projects: ProjectSummary[], period: string): Row[] {
-  const catTotals: Record<string, { turns: number; cost: number }> = {}
+  // Null-prototype maps in this file: keys (category/model/tool/bash names) are
+  // untrusted transcript strings; a plain {} would let "__proto__"/"constructor"
+  // keys pollute Object.prototype. See daily-cache.safeRecord / day-aggregator.
+  const catTotals: Record<string, { turns: number; cost: number }> = Object.create(null)
   for (const project of projects) {
     for (const session of project.sessions) {
       for (const [cat, d] of Object.entries(session.categoryBreakdown)) {
@@ -105,7 +114,7 @@ function buildActivityRows(projects: ProjectSummary[], period: string): Row[] {
 }
 
 function buildModelRows(projects: ProjectSummary[], period: string): Row[] {
-  const modelTotals: Record<string, { calls: number; cost: number; input: number; output: number; cacheRead: number; cacheWrite: number }> = {}
+  const modelTotals: Record<string, { calls: number; cost: number; input: number; output: number; cacheRead: number; cacheWrite: number }> = Object.create(null)
   const modelEfficiency = aggregateModelEfficiency(projects)
   for (const project of projects) {
     for (const session of project.sessions) {
@@ -148,7 +157,7 @@ function buildModelRows(projects: ProjectSummary[], period: string): Row[] {
 }
 
 function buildToolRows(projects: ProjectSummary[]): Row[] {
-  const toolTotals: Record<string, number> = {}
+  const toolTotals: Record<string, number> = Object.create(null)
   for (const project of projects) {
     for (const session of project.sessions) {
       for (const [tool, d] of Object.entries(session.toolBreakdown)) {
@@ -167,7 +176,7 @@ function buildToolRows(projects: ProjectSummary[]): Row[] {
 }
 
 function buildBashRows(projects: ProjectSummary[]): Row[] {
-  const bashTotals: Record<string, number> = {}
+  const bashTotals: Record<string, number> = Object.create(null)
   for (const project of projects) {
     for (const session of project.sessions) {
       for (const [cmd, d] of Object.entries(session.bashBreakdown)) {

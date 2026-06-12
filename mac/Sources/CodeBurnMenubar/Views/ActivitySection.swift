@@ -15,13 +15,15 @@ struct ActivitySection: View {
                     Text("1-shot").frame(minWidth: 44, alignment: .trailing)
                 }
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .tracking(-0.05)
             }
         ) {
-            VStack(alignment: .leading, spacing: 7) {
-                let maxCost = store.payload.current.topActivities.map(\.cost).max() ?? 1
-                ForEach(store.payload.current.topActivities, id: \.name) { activity in
+            VStack(alignment: .leading, spacing: 5) {
+                let maxCost = store.currentPayload.current.topActivities.map(\.cost).max() ?? 1
+                // enumerated offset id: under .all aggregation two activities can
+                // share a name, which collapsed/mis-diffed rows with id: \.name.
+                ForEach(Array(store.currentPayload.current.topActivities.enumerated()), id: \.offset) { _, activity in
                     ActivityRow(activity: activity, maxCost: maxCost)
                 }
             }
@@ -32,6 +34,8 @@ struct ActivitySection: View {
 struct ActivityRow: View {
     let activity: ActivityEntry
     let maxCost: Double
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
@@ -59,8 +63,17 @@ struct ActivityRow: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 44, alignment: .trailing)
         }
-        .padding(.horizontal, 2)
-        .padding(.vertical, 1)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.secondary.opacity(isHovered ? 0.08 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { h in
+            if reduceMotion { isHovered = h }
+            else { withAnimation(.easeOut(duration: 0.12)) { isHovered = h } }
+        }
     }
 
     private var oneShotText: String {
@@ -79,16 +92,23 @@ struct ActivityRow: View {
 /// Fixed-width horizontal bar that shows a fill fraction.
 struct FixedBar: View {
     let fraction: Double
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
+            let target = max(0, min(geo.size.width, geo.size.width * CGFloat(fraction)))
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(.secondary.opacity(0.15))
                 RoundedRectangle(cornerRadius: 2)
                     .fill(Theme.brandAccent)
-                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(fraction))))
+                    // Grow from 0 on appear (and ease when the value changes).
+                    .frame(width: (shown || reduceMotion) ? target : 0)
+                    .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.85), value: shown)
+                    .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.85), value: target)
             }
+            .onAppear { shown = true }
         }
     }
 }

@@ -1,5 +1,21 @@
 import chalk from 'chalk'
+import stripAnsi from 'strip-ansi'
 import type { ProjectSummary } from './types.js'
+
+/**
+ * Strip ANSI escape sequences AND residual C0/C1 control characters (ESC 0x1b,
+ * BEL 0x07, OSC/DCS payloads, etc.) from a string before it is shown in the
+ * terminal (TUI dashboard / compare view) or written to a file a user may `cat`
+ * (CSV export). Model / tool / MCP-server / project names come verbatim from
+ * untrusted transcripts, so this blocks terminal-escape injection: cursor
+ * moves, screen clears, OSC window-title / hyperlink spoofing, and bell spam.
+ * strip-ansi removes well-formed escape sequences; the follow-up regex drops
+ * any lone control byte (incl. an escape left dangling by later truncation).
+ * Mirrors the existing strip in models.ts's unknown-model warning path.
+ */
+export function stripControlChars(s: string): string {
+  return stripAnsi(s).replaceAll(/[\u0000-\u001F\u007F-\u009F]/g, '')
+}
 
 // Re-exported from currency.ts so existing imports from './format.js' keep working.
 // The currency-aware version applies exchange rate and symbol automatically.

@@ -36,8 +36,11 @@ private struct GeneralSettingsTab: View {
                     get: { store.currency },
                     set: { applyCurrency(code: $0) }
                 )) {
-                    ForEach(["USD", "EUR", "GBP", "INR", "JPY", "AUD", "CAD"], id: \.self) { code in
-                        Text(code).tag(code)
+                    // Full list matching the popover footer menu (was a stale
+                    // 7-currency subset, so a footer-picked currency had no
+                    // matching row here).
+                    ForEach(SupportedCurrency.allCases) { c in
+                        Text("\(c.displayName) (\(c.rawValue))").tag(c.rawValue)
                     }
                 }
                 Picker("Accent", selection: Binding(
@@ -45,7 +48,11 @@ private struct GeneralSettingsTab: View {
                     set: { store.accentPreset = $0 }
                 )) {
                     ForEach(AccentPreset.allCases) { preset in
-                        Text(preset.rawValue).tag(preset)
+                        // Color swatch + name, matching the header palette picker.
+                        HStack {
+                            Circle().fill(preset.base).frame(width: 10, height: 10)
+                            Text(preset.rawValue)
+                        }.tag(preset)
                     }
                 }
             }
@@ -157,9 +164,9 @@ private struct ClaudeConnectionRow: View {
 
     private var stateTint: Color {
         switch store.subscriptionLoadState {
-        case .loaded: return .green
-        case .terminalFailure, .failed: return .red
-        case .transientFailure: return .orange
+        case .loaded: return Theme.semanticSuccess
+        case .terminalFailure, .failed: return Theme.semanticDanger
+        case .transientFailure: return Theme.semanticWarning
         default: return .secondary
         }
     }
@@ -289,9 +296,9 @@ private struct CodexConnectionRow: View {
 
     private var stateTint: Color {
         switch store.codexLoadState {
-        case .loaded: return .green
-        case .terminalFailure, .failed: return .red
-        case .transientFailure: return .orange
+        case .loaded: return Theme.semanticSuccess
+        case .terminalFailure, .failed: return Theme.semanticDanger
+        case .transientFailure: return Theme.semanticWarning
         default: return .secondary
         }
     }
@@ -372,9 +379,7 @@ private struct AboutSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "flame.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(Theme.brandAccent)
+            FlameMark(size: 44)
             Text("CodeBurn")
                 .font(.system(size: 18, weight: .semibold))
             Text("AI Coding Cost Tracker")

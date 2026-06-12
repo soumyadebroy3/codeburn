@@ -30,6 +30,19 @@ struct CodeBurnApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    /// macOS 27 stops routing right-mouse events to the status-item button's
+    /// target/action, so a global right-mouse-down monitor restores the menu.
+    private var rightClickMonitor: Any?
+    /// Debounce so the legacy action path and the global monitor can't both
+    /// present the context menu for a single right-click (macOS <= 26).
+    private var lastContextMenuPresentedAt: Date = .distantPast
+    /// Closes the (`.applicationDefined`) popover on a genuine click OUTSIDE the
+    /// app. Using applicationDefined + this monitor instead of `.transient`
+    /// stops internal interactions — provider-tab clicks, and the nested quota
+    /// hover popover on the Claude/Codex tabs — from dismissing the popover,
+    /// while real outside clicks still close it. Installed on show, removed in
+    /// popoverDidClose.
+    private var outsideClickMonitor: Any?
     fileprivate let store = AppStore()
     let updateChecker = UpdateChecker()
     /// Held for the lifetime of the app to opt out of App Nap and Automatic Termination.
@@ -306,10 +319,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if sinceLast >= 5 {
                     if self.store.selectedPeriod != .today || self.store.selectedProvider != .all {
                         async let quiet: Void = self.store.refreshQuietly(period: .today)
-                        async let main: Void = self.store.refresh(includeOptimize: false, force: true)
+                        // force:false so a key refreshed <30s ago by a switch/wake
+                        // is served from cache instead of re-forking the CLI — the
+                        // 30s tick interval otherwise exactly defeats the 30s TTL.
+                        async let main: Void = self.store.refresh(includeOptimize: false, force: false)
                         _ = await (quiet, main)
                     } else {
-                        await self.store.refresh(includeOptimize: false, force: true)
+                        await self.store.refresh(includeOptimize: false, force: false)
                     }
                     self.lastRefreshTime = Date()
                     self.refreshStatusButton()
@@ -374,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // active subscription at a time.
         withObservationTracking { [weak self] in
             guard let self else { return }
-            _ = self.store.payload
+            _ = self.store.currentPayload
             _ = self.store.todayPayload
             // Track currency so the menubar title catches up immediately on
             // currency switch instead of waiting for the next 30s payload tick.
@@ -426,7 +442,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         button.target = self
         button.action = #selector(handleButtonClick(_:))
+        // Left-click drives the popover. We keep .rightMouseUp in the mask so the
+        // legacy action path below still fires on macOS <= 26; on macOS 27 the
+        // system consumes the right button entirely and this never fires, so the
+        // global monitor (below) is what restores the right-click menu there.
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+        // macOS 27 no longer routes any right-mouse event to the status-item
+        // button's target/action. A global monitor still observes right-mouse-down;
+        // we hit-test it against our own status-item window and present the menu
+        // ourselves. Harmless and stable on 15/26 too (the debounce in
+        // showContextMenu prevents a double-present if the legacy path also fires).
+        rightClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] _ in
+            guard let self,
+                  let button = self.statusItem.button,
+                  let window = button.window,
+                  window.frame.contains(NSEvent.mouseLocation) else { return }
+            DispatchQueue.main.async { self.showContextMenu(from: button) }
+        }
 
         // Defer the full attributed title setup to ensure initial render completes
         DispatchQueue.main.async { [weak self] in
@@ -446,6 +479,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         case .critical: return NSColor.systemOrange            // 90-100%
         case .danger:   return NSColor.systemRed               // 100%+
         }
+    }
+
+    /// How "lit" the menu-bar flame should be (0→1): today's spend against the
+    /// daily budget if one is set, otherwise ~1.5× the typical recent day.
+    private static func todayBurnFraction(store: AppStore) -> Double {
+        let today = store.todayPayload?.current.cost ?? 0
+        guard today > 0 else { return 0 }
+        let history = store.todayPayload?.history.daily ?? []
+        let recent = history.suffix(15).dropLast().map(\.cost).filter { $0 > 0 }
+        let typical = recent.isEmpty ? 0 : recent.reduce(0, +) / Double(recent.count)
+        let denom = store.dailyBudget > 0 ? store.dailyBudget : (typical > 0 ? typical * 1.5 : today)
+        return max(0, min(today / denom, 1))
     }
 
     private func refreshStatusButton() {
@@ -485,8 +530,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             flameConfig = baseConfig
         }
-        let flame = NSImage(systemSymbolName: "flame.fill", accessibilityDescription: "CodeBurn")?
-            .withSymbolConfiguration(flameConfig)
+        // The flame glyph itself fills with the day's burn (0→1) on macOS 15+,
+        // turning the menu-bar icon into an at-a-glance gauge; the palette tint
+        // (quota/budget severity) still layers on top. Plain flat flame on 14.
+        let burnFraction = Self.todayBurnFraction(store: store)
+        let flame: NSImage?
+        if #available(macOS 15, *) {
+            flame = NSImage(systemSymbolName: "flame.fill", variableValue: burnFraction, accessibilityDescription: "CodeBurn")?
+                .withSymbolConfiguration(flameConfig)
+        } else {
+            flame = NSImage(systemSymbolName: "flame.fill", accessibilityDescription: "CodeBurn")?
+                .withSymbolConfiguration(flameConfig)
+        }
         flame?.isTemplate = (tint == nil)
 
         let attachment = NSTextAttachment()
@@ -519,7 +574,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func setupPopover() {
         popover = NSPopover()
         popover.contentSize = NSSize(width: popoverWidth, height: popoverHeight)
-        popover.behavior = .transient  // auto-close only on explicit outside click
+        // .applicationDefined (not .transient): we close it ourselves via a
+        // global outside-click monitor (installOutsideClickMonitor). .transient
+        // dismissed the popover on internal interactions too — notably the
+        // nested quota hover popover on the Claude/Codex tabs — which read as
+        // "clicking a tab closes the popover". Genuine outside clicks still close it.
+        popover.behavior = .applicationDefined
         popover.animates = true
         popover.delegate = self
 
@@ -535,6 +595,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem.button,
               let event = NSApp.currentEvent else { return }
 
+        // Legacy right-click path for macOS <= 26 (no-op on 27, where the action
+        // never receives a right-mouse event — the global monitor handles it).
         if event.type == .rightMouseUp {
             showContextMenu(from: button)
             return
@@ -551,6 +613,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // via makeKeyAndOrderFront, which is enough for keystrokes to
             // reach the SwiftUI content.
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // Sleep/wake recovery on open: if the Mac slept for hours the wake
+            // notification may not have fired, leaving the refresh loop dead, a
+            // wedged loading spinner, and stale data. Clear any wedged loading,
+            // restart the loop if it died, and pull a fresh fetch if the visible
+            // data has gone stale — so opening always shows current usage.
+            store.clearWedgedLoading()
+            if refreshLoopTask == nil { startRefreshLoop() }
+            if store.isCurrentDataStale { forceRefresh() }
+            // Warm the other common periods (all-provider) so the first click on
+            // 7 Days / 30 Days / Month shows data instead of a spinner. Gated to
+            // popover-open so idle machines don't spawn CLIs on a timer.
+            store.warmCommonPeriods()
             if let window = popover.contentViewController?.view.window {
                 // Pin the popover's window above the status-bar layer but tag
                 // it as auxiliary so macOS Tahoe does not treat it as an
@@ -562,11 +636,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 window.collectionBehavior.insert(.canJoinAllSpaces)
                 window.makeKeyAndOrderFront(nil)
             }
+            installOutsideClickMonitor()
+        }
+    }
+
+    /// Global monitor that closes the popover on a mouse-down OUTSIDE the app.
+    /// Clicks INSIDE the popover are local events the monitor never sees, so
+    /// they no longer dismiss it (the `.transient` behavior did). Clicks on our
+    /// own status item are ignored here — handleButtonClick owns that toggle, so
+    /// closing here too would race it back open.
+    private func installOutsideClickMonitor() {
+        removeOutsideClickMonitor()
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self, self.popover.isShown else { return }
+            if let buttonWindow = self.statusItem.button?.window,
+               buttonWindow.frame.contains(NSEvent.mouseLocation) {
+                return  // click landed on our status item; let handleButtonClick toggle it
+            }
+            self.popover.performClose(nil)
+        }
+    }
+
+    private func removeOutsideClickMonitor() {
+        if let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
         }
     }
 
     private func showContextMenu(from button: NSStatusBarButton) {
+        // Debounce: on macOS <= 26 both the legacy action path and the global
+        // monitor can fire for a single right-click. Present at most once per click.
+        let now = Date()
+        guard now.timeIntervalSince(lastContextMenuPresentedAt) > 0.3 else { return }
+        lastContextMenuPresentedAt = now
+
         let menu = NSMenu()
+
+        // Live glanceable header (non-interactive): today's spend + any quota
+        // warnings — the rich status-item summary macOS users expect from a
+        // right-click (Battery / Time Machine / Now Playing all do this).
+        let todayCost = store.todayPayload?.current.cost
+        let header = NSMenuItem(title: "Today: \(todayCost?.asCompactCurrency() ?? "—")", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for warning in store.aggregateQuotaStatus.warnings {
+            let item = NSMenuItem(title: "  \(warning.name) \(Int(warning.percent.rounded()))% of quota", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -585,9 +704,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         quitItem.target = self
         menu.addItem(quitItem)
 
-        statusItem.menu = menu
-        button.performClick(nil)
-        statusItem.menu = nil
+        // Present directly. The previous `statusItem.menu = menu; button.performClick`
+        // trick relies on the click -> action path that macOS 27 changed; popUp is
+        // version-stable.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
     private var settingsWindowController: NSWindowController?
@@ -671,6 +791,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitor = nil
+        }
     }
 
     /// One-shot warning at startup if the user's PATH resolves `codeburn` to a directory
@@ -696,6 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        removeOutsideClickMonitor()
         // Catch up on any menubar title updates that were skipped while the
         // popover was anchored.
         refreshStatusButton()

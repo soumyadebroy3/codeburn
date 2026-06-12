@@ -12,6 +12,13 @@ Thumbs.db
 *.swp
 *.swo
 *~
+*.bak
+
+# Local MCP / agent config — kept out of version control so clones don't ship
+# an auto-start MCP surface (relative-path / repo-committed servers). Each dev
+# keeps their own local copy.
+.mcp.json
+.opencode.json
 
 # Planning artifacts (internal, not shipped)
 docs/superpowers/

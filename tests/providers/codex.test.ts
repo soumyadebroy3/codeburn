@@ -504,4 +504,56 @@ describe('codex provider - JSONL parsing', () => {
     // Without the fork-replay skip this would be 3 calls (double-counting).
     expect(calls).toHaveLength(1)
   })
+
+  // The dedup key is content-addressed by the full cumulative token breakdown,
+  // not just the total (upstream #458). A parent and a fork share the
+  // `codex:<parentId>:<total>` prefix, so keying on the total alone would drop a
+  // genuinely divergent fork turn that happens to reach the same total.
+  function forkMetaLine() {
+    return JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-04-14T10:00:00Z',
+      payload: {
+        cwd: '/Users/test/myproject', originator: 'codex-cli',
+        session_id: 'fork-1', forked_from_id: 'parent-1', model: 'gpt-5.3-codex',
+      },
+    })
+  }
+
+  async function aggregateParentThenFork(forkTotal: { input: number; output: number }) {
+    const parentPath = await writeSession(tmpDir, '2026-04-14', 'rollout-parent.jsonl', [
+      sessionMeta({ session_id: 'parent-1' }),
+      // Parent reaches cumulative total 1500 via a 1000/500 split.
+      tokenCount({ timestamp: '2026-04-14T10:01:00Z', total: { input: 1000, output: 500 } }),
+    ])
+    const forkPath = await writeSession(tmpDir, '2026-04-14', 'rollout-fork.jsonl', [
+      forkMetaLine(),
+      // Past the 5s fork cutoff, so the timestamp skip can't catch it — only the
+      // content-addressed dedup key decides whether it's kept.
+      tokenCount({ timestamp: '2026-04-14T10:01:00Z', total: forkTotal }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const seenKeys = new Set<string>()
+    const calls: ParsedProviderCall[] = []
+    for (const path of [parentPath, forkPath]) {
+      const parser = provider.createSessionParser({ path, project: 'test', provider: 'codex' }, seenKeys)
+      for await (const call of parser.parse()) calls.push(call)
+    }
+    return calls
+  }
+
+  it('keeps a divergent fork turn that shares the parent cumulative total but a different token split (upstream #458)', async () => {
+    // Same total (1500) as the parent, but a 700/800 split instead of 1000/500.
+    const calls = await aggregateParentThenFork({ input: 700, output: 800 })
+    // Both retained: the divergent fork turn must not be undercounted as a replay.
+    expect(calls).toHaveLength(2)
+  })
+
+  it('still dedupes a fork replay that lands past the cutoff with the parent token split (upstream #458)', async () => {
+    // Same total AND the same 1000/500 split as the parent → a true replay.
+    const calls = await aggregateParentThenFork({ input: 1000, output: 500 })
+    // The replay collides with the parent's content-addressed key and is dropped.
+    expect(calls).toHaveLength(1)
+  })
 })

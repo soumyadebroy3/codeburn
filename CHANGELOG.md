@@ -1,5 +1,120 @@
 # Changelog
 
+## 2.4.9 - 2026-06-12
+
+Sync with upstream: ten ported fixes and features, including a critical
+live-pricing fix for the running model and two macOS menubar reliability fixes.
+
+### Added
+- **Fable 5 / Mythos 5 pricing + display names.** The running CLI reports
+  `claude-fable-5`, which had no snapshot entry and so priced at **$0**; seeded
+  launch pricing ($10/M input, $50/M output) until LiteLLM indexes them.
+  (upstream #463)
+- **Mux (coder) provider.** Reads `~/.mux` sessions (incl. nested sub-agent
+  transcripts), strips the `provider:` model prefix so costs price correctly.
+  (upstream #438)
+- **GitHub Copilot JetBrains (IntelliJ/DataGrip) sessions** are now discovered
+  and parsed. (upstream #433)
+- **Chinese Yuan (CNY)** currency. (upstream #430)
+
+### Fixed
+- **Menubar no longer wedges on "Loading…" under load.** The blocking
+  `process.waitUntilExit()` on the cooperative thread pool was replaced with an
+  async `terminationHandler` wait, plus a spawn-concurrency cap so a wake-burst
+  of refreshes can't fan out into dozens of node processes. (upstream #462)
+- **macOS 27 right-click menu restored** via a global right-mouse monitor (the
+  system no longer routes right-clicks to the status-item action). (upstream #472)
+- **Bounded all outbound HTTP** (pricing + currency) with an 8s timeout so a
+  half-open network after wake-from-sleep can't hang the daily refresh — the
+  same wedge class as the menubar loader. (upstream #448)
+- **String `content` no longer crashes the parser.** Some agents write a
+  message's `content` as a plain string; a raw string hitting `.filter` threw
+  mid-parse and, because the 365-day backfill swallows errors, silently wiped
+  the entire trend/history. (upstream #441/#450)
+- **Codex forked-session dedup is content-addressed** by the full token
+  breakdown, not just the cumulative total, so a genuinely divergent fork turn
+  that reaches the same total isn't undercounted. (upstream #458)
+- **Nested workflow/ultracode sub-agent transcripts counted.** Usage in
+  `subagents/workflows/<wf>/agent-*.jsonl` was missed by the flat scan.
+  (upstream #470/#471)
+- **Copilot project inference works on Windows paths** (split on either path
+  separator). (upstream #456)
+
+## 2.4.8 - 2026-06-11
+
+A large macOS menubar overhaul — performance, a best-in-class visual + motion
+pass, and several sleep/wake and interaction bug fixes.
+
+### Performance
+- **CLI parses today's transcripts once per `--all` call** instead of three
+  times. Each of the current-period / providers / history blocks built its own
+  `todayRange` with a fresh `new Date()`, so `parseAllSessions`'s in-process
+  cache key never matched and today's JSONL was cold-parsed three times — the
+  single most-spawned menubar command.
+- **Menubar payload decoupled from the cache dictionary.** Views read a stored
+  `currentPayload`, so a quiet 30s background write (or a parallel all-provider
+  fetch) no longer re-evaluates the entire popover under @Observable.
+- **Stats and Findings analytics memoized** (recompute only on payload/currency
+  change, not every redraw); the Stats tab's ~400-iteration streak loop and the
+  Findings tip computation no longer run on every body eval. Shared cached
+  `Calendar`/`DateFormatter` in Findings.
+- Suppressed a duplicate all-provider CLI spawn on tab switches; added a 150ms
+  switch debounce, popover-open prefetch of the common periods, and made the
+  30s tick respect the 30s cache TTL.
+
+### Fixed
+- **Popover no longer closes when clicking the Claude/Codex tabs** (their nested
+  quota hover-popover tripped `.transient`); switched to `.applicationDefined`
+  with a global outside-click monitor.
+- **Refresh button no longer spins forever** — replaced a stuck-prone custom
+  rotation with the native spinner and added a wedged-loading guard.
+- **Auto-fetches after a long sleep.** Opening the popover now recovers a dead
+  refresh loop / wedged loading and pulls fresh data if it has gone stale.
+- Switching providers no longer animates the trend bars down-then-up.
+
+### Changed (visual + motion)
+- Redesigned the trend chart (gradient top-rounded bars, today/peak emphasis,
+  refined average line, headroom scaling, empty state, **staggered bar-rise**
+  entrance), header (accent-driven FlameMark + monochrome wordmark + palette
+  control), hero (flat fill, accent bloom, rolling `numericText` figure), and
+  unified the three selector rows with sliding selection + press feedback.
+- Inline **14-day sparkline** in the hero; **first-run welcome state**; live
+  right-click status-item menu (today's spend + quota); **variable-value
+  menubar flame** that fills with the day's burn (macOS 15+).
+- Depth/typography pass (elevated tiles, fade-to-end separators, one content
+  gutter, consistent type ramp, `monospacedDigit` on live counters), SF Symbol
+  effects, haptics on commit actions, pointing-hand cursors, insight-tab
+  cross-fade, and cost bars that grow from 0.
+- Full accessibility pass: every animation honors Reduce Motion; VoiceOver
+  labels/values/traits and Increase-Contrast-aware captions.
+
+## 2.4.7 - 2026-06-10
+
+### Security
+- **Prototype-pollution hardening across all usage aggregation.** Model,
+  provider, tool, MCP-server and bash names are read verbatim from untrusted
+  transcripts and used as object keys. The daily aggregator, period builders,
+  TUI dashboard, and CSV exporter now bucket them in null-prototype maps, so a
+  `__proto__`/`constructor` key can no longer bind to `Object.prototype` and
+  corrupt it process-wide. Mirrors the existing cache-load guard; covered by a
+  new regression test.
+- **Terminal-escape injection blocked in the dashboard and CSV exports.**
+  Transcript-derived names could carry ANSI/OSC/BEL sequences (window-title
+  spoofing, OSC-8 phishing links, bell spam, cursor/screen control) that the
+  terminal would execute when rendered in the TUI or `cat`-ed from an exported
+  CSV. A shared `stripControlChars()` now sanitizes them at every terminal/file
+  sink.
+- **Supply chain: all GitHub Actions are SHA-pinned.** Previously floating tags
+  (`@v2`, `@stable`) — including in the OIDC-privileged npm publish job — are now
+  pinned to full commit SHAs. The CycloneDX SBOM step is version-pinned and runs
+  with `--ignore-scripts`. Dependabot is now configured (it was an inert
+  placeholder) to keep the pins and npm/cargo dependencies current.
+- **Removed the auto-executing IDE-config surface.** Dropped the Gemini hooks
+  that ran repo-committed shell scripts on session open, stripped hardcoded
+  foreign developer paths from the Cursor/Kiro/Qoder/Gemini MCP configs, and
+  stopped tracking `.mcp.json` / `.opencode.json` so clones no longer ship an
+  auto-start MCP server surface.
+
 ## 2.4.6 - 2026-06-02
 
 ### Changed

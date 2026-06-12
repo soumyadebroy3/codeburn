@@ -3,6 +3,11 @@ import Observation
 
 private let cacheTTLSeconds: TimeInterval = 30
 
+/// Debounce before a period/provider switch spawns the CLI. A rapid swipe
+/// across buttons cancels the pending task before any subprocess forks; the
+/// selection itself updates synchronously so the control highlights instantly.
+private let switchDebounceNanos: UInt64 = 150_000_000  // 150 ms
+
 /// Wall-clock budget after which an in-flight refresh is considered stuck —
 /// the periodic watchdog in CodeBurnApp will then call
 /// `resetStaleLoadingState()` to clear loadingCount + inFlightKeys so the
@@ -96,6 +101,31 @@ final class AppStore {
         cache[currentKey]?.payload ?? .empty
     }
 
+    /// The popover-visible payload, as a STORED property. Views read this
+    /// instead of the computed `payload` so that, under @Observable, a quiet
+    /// background write to some OTHER cache key (the parallel all-provider
+    /// fetch, a 30 s quiet refresh for a different period, a prefetch warm)
+    /// no longer invalidates the entire popover subtree — only an actual
+    /// change to the CURRENT key's payload republishes. Kept in sync via
+    /// `publishCurrentIfNeeded()` at every cache mutation and key switch.
+    private(set) var currentPayload: MenubarPayload = .empty
+
+    /// Reassign `currentPayload` only when the current key's payload identity
+    /// (its CLI `generated` timestamp) actually changes, so no-op writes and
+    /// writes to other keys don't trigger a redraw.
+    ///
+    /// When the current key has NO cached data yet (e.g. switching All→Claude to
+    /// an un-fetched key), we deliberately KEEP the previous payload rather than
+    /// blanking to `.empty`: the loading overlay covers it while the fetch runs,
+    /// and when the new data lands the chart morphs straight from the old bars to
+    /// the new ones — instead of collapsing to zero and springing back up.
+    func publishCurrentIfNeeded() {
+        guard let next = cache[currentKey]?.payload else { return }
+        if next.generated != currentPayload.generated {
+            currentPayload = next
+        }
+    }
+
     /// Today (across all providers) is pinned for the always-visible menubar icon, independent of
     /// the popover's selected period or provider.
     var todayPayload: MenubarPayload? {
@@ -128,12 +158,17 @@ final class AppStore {
     /// all-provider data in parallel so tab strip costs stay in sync with the hero.
     func switchTo(period: Period) {
         selectedPeriod = period
+        publishCurrentIfNeeded()   // reflect the new key's cached data (or empty) instantly
         switchTask?.cancel()
         switchTask = Task {
+            // Debounce so a rapid swipe across periods cancels this task before
+            // it forks any CLI. Selection already updated synchronously above.
+            try? await Task.sleep(nanoseconds: switchDebounceNanos)
+            if Task.isCancelled { return }
             if selectedProvider == .all {
-                await refresh(includeOptimize: false, force: true)
+                await refresh(includeOptimize: false, force: true, skipAllTopUp: true)
             } else {
-                async let main: Void = refresh(includeOptimize: false, force: true)
+                async let main: Void = refresh(includeOptimize: false, force: true, skipAllTopUp: true)
                 async let all: Void = refreshQuietly(period: period)
                 _ = await (main, all)
             }
@@ -145,12 +180,15 @@ final class AppStore {
     /// in parallel so the tab strip costs stay in sync with the hero.
     func switchTo(provider: ProviderFilter) {
         selectedProvider = provider
+        publishCurrentIfNeeded()   // reflect the new key's cached data (or empty) instantly
         switchTask?.cancel()
         switchTask = Task {
+            try? await Task.sleep(nanoseconds: switchDebounceNanos)
+            if Task.isCancelled { return }
             if provider == .all {
-                await refresh(includeOptimize: false, force: true)
+                await refresh(includeOptimize: false, force: true, skipAllTopUp: true)
             } else {
-                async let main: Void = refresh(includeOptimize: false, force: true)
+                async let main: Void = refresh(includeOptimize: false, force: true, skipAllTopUp: true)
                 async let all: Void = refreshQuietly(period: selectedPeriod)
                 _ = await (main, all)
             }
@@ -231,6 +269,23 @@ final class AppStore {
         loadingStartedAtByKey.removeAll()
     }
 
+    /// Belt-and-suspenders: if the loading count is non-zero but nothing is
+    /// actually in flight, the count wedged (a state that can survive sleep/wake)
+    /// — clear it so the footer refresh spinner can't spin forever.
+    func clearWedgedLoading() {
+        if loadingCount > 0 && inFlightKeys.isEmpty {
+            loadingCount = 0
+        }
+    }
+
+    /// True when the popover-visible key has no cached data, or the cached data
+    /// is older than the freshness TTL — used to pull a fresh fetch when the
+    /// popover is opened (e.g. after the Mac slept for hours).
+    var isCurrentDataStale: Bool {
+        guard let cached = cache[currentKey] else { return true }
+        return Date().timeIntervalSince(cached.fetchedAt) >= cacheTTLSeconds
+    }
+
     /// Watchdog entry point — called periodically from CodeBurnApp. Drops
     /// loading flags for keys whose refresh attempt is past the watchdog
     /// budget so the next user action (or tick) can re-trigger a fresh
@@ -264,14 +319,16 @@ final class AppStore {
         if cacheDate != today {
             cache.removeAll()
             cacheDate = today
+            publishCurrentIfNeeded()
         }
     }
 
     func invalidateCache() {
         cache.removeAll()
+        publishCurrentIfNeeded()
     }
 
-    func refresh(includeOptimize: Bool, force: Bool = false, showLoading: Bool = false) async {
+    func refresh(includeOptimize: Bool, force: Bool = false, showLoading: Bool = false, skipAllTopUp: Bool = false) async {
         invalidateStaleDayCache()
         let key = currentKey
         let cacheDateAtStart = cacheDate
@@ -321,6 +378,7 @@ final class AppStore {
             cache[key] = CachedPayload(payload: fresh, fetchedAt: Date())
             lastSuccessByKey[key] = Date()
             lastError = nil
+            publishCurrentIfNeeded()
         } catch {
             if Task.isCancelled { return }
             LogSanitizer.logSafe("fetch failed for \(key.period.rawValue)/\(key.provider.rawValue)", error)
@@ -332,6 +390,7 @@ final class AppStore {
                     cache[key] = CachedPayload(payload: fallback, fetchedAt: Date())
                     lastSuccessByKey[key] = Date()
                     lastError = nil
+                    publishCurrentIfNeeded()
                     return
                 } catch {
                     if Task.isCancelled { return }
@@ -341,9 +400,15 @@ final class AppStore {
             lastError = String(describing: error)
         }
 
-        let allKey = PayloadCacheKey(period: selectedPeriod, provider: .all)
-        if key != allKey, cache[allKey]?.isFresh != true {
-            await refreshQuietly(period: selectedPeriod)
+        // The two switchTo non-all branches already fetch the all-provider
+        // payload in parallel, so they pass skipAllTopUp:true to avoid forking
+        // the all CLI a second time here (a single tab click was spawning it
+        // twice, racing). Periodic-tick callers leave it false.
+        if !skipAllTopUp {
+            let allKey = PayloadCacheKey(period: selectedPeriod, provider: .all)
+            if key != allKey, cache[allKey]?.isFresh != true {
+                await refreshQuietly(period: selectedPeriod)
+            }
         }
     }
 
@@ -359,8 +424,20 @@ final class AppStore {
             // the calendar rolled over during the fetch.
             if cacheDate != cacheDateAtStart { return }
             cache[PayloadCacheKey(period: period, provider: .all)] = CachedPayload(payload: fresh, fetchedAt: Date())
+            publishCurrentIfNeeded()
         } catch {
             LogSanitizer.logSafe("quiet refresh failed for \(period.rawValue)", error)
+        }
+    }
+
+    /// Warm the all-provider payloads for the common non-selected periods so the
+    /// first click on 7 Days / 30 Days / Month shows data instead of a spinner.
+    /// Cheap: historical days come from the CLI daily-cache and today is parsed
+    /// once. Caller gates this to popover-open so idle machines don't spawn CLIs.
+    func warmCommonPeriods() {
+        for p in [Period.sevenDays, .thirtyDays, .month] {
+            if cache[PayloadCacheKey(period: p, provider: .all)]?.isFresh == true { continue }
+            Task(priority: .utility) { await self.refreshQuietly(period: p) }
         }
     }
 
@@ -775,7 +852,7 @@ final class AppStore {
 }
 
 enum SupportedCurrency: String, CaseIterable, Identifiable {
-    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK
+    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CNY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -786,6 +863,7 @@ enum SupportedCurrency: String, CaseIterable, Identifiable {
         case .CAD: "Canadian Dollar"
         case .NZD: "New Zealand Dollar"
         case .JPY: "Japanese Yen"
+        case .CNY: "Chinese Yuan"
         case .CHF: "Swiss Franc"
         case .INR: "Indian Rupee"
         case .BRL: "Brazilian Real"

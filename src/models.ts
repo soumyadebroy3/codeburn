@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import snapshotData from './data/litellm-snapshot.json'
+import { fetchWithTimeout } from './fetch-utils.js'
 
 export type ModelCosts = {
   inputCostPerToken: number
@@ -66,6 +67,22 @@ function loadSnapshot(): Map<string, ModelCosts> {
       fastMultiplier: FAST_MULTIPLIERS[name] ?? 1,
     })
   }
+  // TEMP (2026-06-09): Fable 5 / Mythos 5 launch pricing, $10/M input and $50/M
+  // output, until LiteLLM indexes them. The running CLI reports `claude-fable-5`,
+  // which would otherwise floor to $0. Added as snapshot fallbacks so a real
+  // LiteLLM entry, once it exists, takes precedence. Remove then. (upstream #463)
+  const tempLaunch: ModelCosts = {
+    inputCostPerToken: 0.00001,
+    outputCostPerToken: 0.00005,
+    cacheWriteCostPerToken: 0.0000125,
+    cacheWrite1hCostPerToken: 0.00002,
+    cacheReadCostPerToken: 0.000001,
+    webSearchCostPerRequest: WEB_SEARCH_COST,
+    fastMultiplier: 1,
+  }
+  for (const id of ['claude-fable-5', 'claude-mythos-5']) {
+    if (!map.has(id)) map.set(id, { ...tempLaunch })
+  }
   return map
 }
 
@@ -118,7 +135,11 @@ function parseLiteLLMEntry(entry: LiteLLMEntry): ModelCosts | null {
 }
 
 async function fetchAndCachePricing(): Promise<Map<string, ModelCosts>> {
-  const response = await fetch(LITELLM_URL)
+  // Bounded: runs on every CLI invocation (the menubar shells out and blocks on
+  // it). Without a timeout a half-open network after wake-from-sleep makes
+  // fetch() hang forever, wedging the menubar's loading spinner. On timeout the
+  // caller's catch falls back to the bundled price snapshot.
+  const response = await fetchWithTimeout(LITELLM_URL)
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const data = await response.json() as Record<string, LiteLLMEntry>
   const pricing = new Map<string, ModelCosts>()
@@ -438,6 +459,9 @@ const autoModelNames: Record<string, string> = {
 }
 
 const SHORT_NAMES: Record<string, string> = {
+  // TEMP (2026-06-09): until deriveClaudeShortName or LiteLLM cover them. (upstream #463)
+  'claude-fable-5': 'Fable 5',
+  'claude-mythos-5': 'Mythos 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-7': 'Opus 4.7',
   'claude-opus-4-6': 'Opus 4.6',

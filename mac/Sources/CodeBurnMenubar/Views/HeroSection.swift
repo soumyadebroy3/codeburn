@@ -1,7 +1,14 @@
 import SwiftUI
 
+private let heroDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "EEE, MMM d"   // "Wed, Jun 10"
+    return f
+}()
+
 struct HeroSection: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heroPressed: Bool = false
 
     /// Cycle the hero metric on tap: cost → tokens (↑↓) → cost.
@@ -24,28 +31,44 @@ struct HeroSection: View {
                     .font(.system(size: 32, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .tracking(-1)
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Theme.brandAccent, Theme.brandAccentDeep],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    // Tap to cycle metric. contentShape makes the whole
-                    // bounding box tappable (not just the rendered glyphs).
-                    // scaleEffect gives a subtle press-feedback so the
-                    // tap target reads as interactive on hover/click.
+                    // Flat accent fill: a vertical accent→deep gradient muddied
+                    // the bottom of the digits at 32pt; solid reads cleaner and
+                    // lets the numericText roll animate crisply. Accent-agnostic.
+                    .foregroundStyle(Theme.brandAccent)
+                    // Soft accent bloom behind the figure so it reads as a
+                    // luminous focal point, not flat text on the material. Sits
+                    // behind the glyphs — no hit-testing, no legibility hit.
+                    .background(alignment: .leading) {
+                        RadialGradient(colors: [Theme.brandAccentGlow.opacity(0.18), .clear],
+                                       center: .leading, startRadius: 2, endRadius: 120)
+                            .blur(radius: 18)
+                            .frame(height: 86)
+                            .offset(y: 2)
+                            .allowsHitTesting(false)
+                    }
+                    // Roll the figure when it ticks (30s refresh, cost↔tokens,
+                    // period/provider switch) instead of a hard digit cut.
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: heroText)
+                    // Tap to cycle metric. contentShape makes the whole bounding
+                    // box tappable; scaleEffect gives subtle press feedback.
                     .contentShape(Rectangle())
                     .scaleEffect(heroPressed ? 0.97 : 1.0)
-                    .animation(.spring(response: 0.18, dampingFraction: 0.75), value: heroPressed)
-                    .onTapGesture {
-                        heroPressed = true
-                        cycleMetric()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                            heroPressed = false
-                        }
-                    }
+                    .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.75), value: heroPressed)
+                    // Press tracks the finger (down on touch, release + cycle on
+                    // lift) rather than a fixed 0.12s timer that could leave the
+                    // press stuck if the view churned mid-delay.
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in if !heroPressed { heroPressed = true } }
+                            .onEnded { _ in cycleMetric(); heroPressed = false }
+                    )
                     .help(metricTooltip)
+                    .accessibilityLabel(store.displayMetric == .tokens ? "Total tokens" : "Total cost")
+                    .accessibilityValue(heroText)
+                    .accessibilityHint(metricTooltip)
+                    .accessibilityAddTraits(.isButton)
+                    .clickableCursor()
 
                 Spacer()
 
@@ -65,22 +88,31 @@ struct HeroSection: View {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.down")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text(formatTokens(Double(store.payload.current.outputTokens)))
+                            Text(formatTokens(Double(store.currentPayload.current.outputTokens)))
                         }
                         .font(.system(size: 10.5))
                         .monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                     } else {
-                        Text("\(store.payload.current.calls.asThousandsSeparated()) calls")
+                        Text("\(store.currentPayload.current.calls.asThousandsSeparated()) calls")
                             .font(.system(size: 11))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
-                        Text("\(store.payload.current.sessions) sessions")
+                        Text("\(store.currentPayload.current.sessions) sessions")
                             .font(.system(size: 10.5))
                             .monospacedDigit()
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            // 14-day trend at a glance, without opening the Trend tab. Reuses
+            // the existing accent-driven SparklineView and tracks the hero metric.
+            if sparkPoints.count >= 2 {
+                SparklineView(points: sparkPoints)
+                    .frame(height: 22)
+                    .padding(.top, 2)
+                    .accessibilityLabel("14-day \(store.displayMetric == .tokens ? "token" : "spend") trend")
             }
 
             // Daily budget warning banner — uses todayPayload (always-warm
@@ -97,6 +129,7 @@ struct HeroSection: View {
                         .font(.system(size: 10))
                     Text("Daily budget of \(store.dailyBudget.asCurrency()) exceeded")
                         .font(.system(size: 11, weight: .medium))
+                        .monospacedDigit()
                 }
                 .foregroundStyle(.orange)
                 .padding(.top, 2)
@@ -105,6 +138,12 @@ struct HeroSection: View {
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 12)
+    }
+
+    /// Last 14 days of the hero metric, feeding the inline sparkline.
+    private var sparkPoints: [Double] {
+        let days = store.currentPayload.history.daily.suffix(14)
+        return store.displayMetric == .tokens ? days.map(\.effectiveTokens) : days.map(\.cost)
     }
 
     /// One-line tooltip surfaced on hover. Tells the user the next view
@@ -123,14 +162,14 @@ struct HeroSection: View {
     /// agentic runs that's ~2-5% of real throughput and read as wildly
     /// inconsistent with the dollar figure beside it.
     private var totalTokens: Int {
-        let c = store.payload.current
+        let c = store.currentPayload.current
         return c.inputTokens + c.outputTokens + c.cacheReadTokens + c.cacheWriteTokens
     }
 
     /// The "input side" total: everything fed to the model. Cache reads
     /// usually dominate this on agentic workloads.
     private var inputSideTokens: Int {
-        let c = store.payload.current
+        let c = store.currentPayload.current
         return c.inputTokens + c.cacheReadTokens + c.cacheWriteTokens
     }
 
@@ -144,7 +183,7 @@ struct HeroSection: View {
             if total >= 1_000 { return String(format: "%.0fK tok", total / 1_000) }
             return String(format: "%.0f tok", total)
         }
-        return store.payload.current.cost.asCurrency()
+        return store.currentPayload.current.cost.asCurrency()
     }
 
     private func formatTokens(_ n: Double) -> String {
@@ -155,16 +194,13 @@ struct HeroSection: View {
     }
 
     private var caption: String {
-        let label = store.payload.current.label.isEmpty ? store.selectedPeriod.rawValue : store.payload.current.label
+        // Today's CLI label is already "Today (2026-06-10)" — pairing it with a
+        // second formatted date duplicated the day, so for today we render one
+        // clean "Today · Wed, Jun 10". Other periods use the CLI label as-is.
         if store.selectedPeriod == .today {
-            return "\(label) · \(todayDate)"
+            return "Today · \(heroDateFormatter.string(from: Date()))"
         }
-        return label
-    }
-
-    private var todayDate: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE MMM d"
-        return formatter.string(from: Date())
+        let label = store.currentPayload.current.label
+        return label.isEmpty ? store.selectedPeriod.rawValue : label
     }
 }

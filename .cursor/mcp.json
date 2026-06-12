@@ -1,13 +1,10 @@
 {
   "mcpServers": {
     "code-review-graph": {
-      "command": "/Users/pain/.local/pipx/venvs/code-review-graph/bin/python",
+      "command": "code-review-graph",
       "args": [
-        "-m",
-        "code_review_graph",
         "serve"
       ],
-      "cwd": "/Users/pain/codeburn",
       "type": "stdio"
     }
   }

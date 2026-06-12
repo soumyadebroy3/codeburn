@@ -39,11 +39,18 @@ private let gregorianCalendar: Calendar = {
 /// Pulse (efficiency KPIs). Pills at top toggle between them.
 struct HeatmapSection: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             InsightPillSwitcher(selected: bindingMode, visibleModes: visibleModes)
+            // Cross-fade between insight tabs instead of a hard swap; the .id makes
+            // each tab a distinct view so it transitions (and re-fires the trend
+            // chart's bar-rise when you switch back to Trend).
             content
+                .id(store.selectedInsight)
+                .transition(.opacity)
+                .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: store.selectedInsight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { ensureValidSelection() }
@@ -66,8 +73,8 @@ struct HeatmapSection: View {
                 return store.selectedProvider == .claude || store.selectedProvider == .codex
             }
             if mode == .optimize {
-                return store.payload.current.retryTax.totalUSD > 0
-                    || store.payload.current.routingWaste.totalSavingsUSD > 0
+                return store.currentPayload.current.retryTax.totalUSD > 0
+                    || store.currentPayload.current.routingWaste.totalSavingsUSD > 0
             }
             return true
         }
@@ -88,11 +95,11 @@ struct HeatmapSection: View {
             } else {
                 PlanInsight(usage: store.subscription)
             }
-        case .trend: TrendInsight(days: store.payload.history.daily)
-        case .forecast: ForecastInsight(days: store.payload.history.daily)
-        case .pulse: PulseInsight(payload: store.payload)
-        case .stats: StatsInsight(payload: store.payload)
-        case .optimize: OptimizeInsight(payload: store.payload)
+        case .trend: TrendInsight(days: store.currentPayload.history.daily)
+        case .forecast: ForecastInsight(days: store.currentPayload.history.daily)
+        case .pulse: PulseInsight(payload: store.currentPayload)
+        case .stats: StatsInsight(payload: store.currentPayload)
+        case .optimize: OptimizeInsight(payload: store.currentPayload)
         }
     }
 }
@@ -102,6 +109,8 @@ struct HeatmapSection: View {
 private struct InsightPillSwitcher: View {
     @Binding var selected: InsightMode
     let visibleModes: [InsightMode]
+    @Namespace private var ns
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // 6-pill row (Plan / Trend / Forecast / Pulse / Stats / Optimize)
@@ -113,22 +122,34 @@ private struct InsightPillSwitcher: View {
         // stays inside the popover's content area.
         HStack(spacing: 3) {
             ForEach(visibleModes) { mode in
+                let isSel = selected == mode
                 Button {
-                    selected = mode
+                    if reduceMotion { selected = mode }
+                    else { withAnimation(.snappy(duration: 0.25)) { selected = mode } }
                 } label: {
                     Text(mode.rawValue)
                         .font(.system(size: 10.5, weight: .medium))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                        .foregroundStyle(selected == mode ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(isSel ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(selected == mode ? AnyShapeStyle(Theme.brandAccent) : AnyShapeStyle(Color.secondary.opacity(0.10)))
-                        )
+                        .background {
+                            // The accent fill slides between pills via matchedGeometry;
+                            // unselected pills carry a quiet neutral fill.
+                            if isSel {
+                                RoundedRectangle(cornerRadius: Theme.controlRadius)
+                                    .fill(Theme.brandAccent)
+                                    .matchedGeometryEffect(id: "insightSel", in: ns)
+                            } else {
+                                RoundedRectangle(cornerRadius: Theme.controlRadius)
+                                    .fill(Color.secondary.opacity(0.10))
+                            }
+                        }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PillPressStyle(reduceMotion: reduceMotion))
+                .accessibilityAddTraits(isSel ? [.isButton, .isSelected] : .isButton)
+                .clickableCursor()
             }
         }
     }
@@ -138,6 +159,7 @@ private struct InsightPillSwitcher: View {
 
 private struct TrendInsight: View {
     let days: [DailyHistoryEntry]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let bars = buildTrendBars(from: days)
@@ -147,9 +169,14 @@ private struct TrendInsight: View {
         let totalTokens = bars.reduce(0.0) { $0 + $1.tokens }
         let useTokens = totalTokens > 0
         let metric: (TrendBar) -> Double = useTokens ? { $0.tokens } : { $0.cost }
-        let maxValue = max(bars.map(metric).max() ?? 1, 0.01)
+        let rawMax = max(bars.map(metric).max() ?? 1, 0.01)
+        // 15% headroom above the peak so a lone outlier doesn't pin the tallest
+        // bar to the ceiling and leave the rest reading as a flat floor.
+        let maxValue = rawMax * 1.15
         let avgValue = bars.isEmpty ? 0 : bars.map(metric).reduce(0, +) / Double(bars.count)
         let peakValue = bars.filter({ metric($0) > 0 }).max(by: { metric($0) < metric($1) })
+        let peakID = peakValue?.id
+        let activeBars = bars.filter { metric($0) > 0 }.count
         // Only show a Yesterday figure when that day had real data — a zero-filled
         // gap day renders "—", not a misleading "0 tok"/"$0.00".
         let yesterdayValue = stats.yesterdayBar.flatMap { $0.hasData ? metric($0) : nil }
@@ -167,6 +194,8 @@ private struct TrendInsight: View {
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.primary)
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: useTokens ? totalTokens : stats.totalThisWindow)
                 }
                 Spacer()
                 if let delta {
@@ -181,14 +210,19 @@ private struct TrendInsight: View {
                 }
             }
 
-            TrendChart(
-                bars: bars,
-                maxValue: maxValue,
-                avgValue: avgValue,
-                metric: metric,
-                formatValue: { formatValue($0, useTokens: useTokens) }
-            )
-            .zIndex(1)
+            if activeBars == 0 {
+                TrendEmptyState(days: trendDays)
+            } else {
+                TrendChart(
+                    bars: bars,
+                    maxValue: maxValue,
+                    avgValue: avgValue,
+                    peakID: peakID,
+                    metric: metric,
+                    formatValue: { formatValue($0, useTokens: useTokens) }
+                )
+                .zIndex(1)
+            }
 
             HStack(spacing: 14) {
                 MiniStat(label: "Avg/day", value: formatValue(avgValue, useTokens: useTokens))
@@ -228,56 +262,81 @@ private struct TrendChart: View {
     let bars: [TrendBar]
     let maxValue: Double
     let avgValue: Double
+    var peakID: TrendBar.ID? = nil
     let metric: (TrendBar) -> Double
     let formatValue: (Double) -> String
 
     @State private var hoveredBarID: TrendBar.ID?
+    @State private var risen = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let avgFraction = maxValue > 0 ? CGFloat(min(avgValue / maxValue, 1.0)) : 0
 
         ZStack(alignment: .bottomLeading) {
             HStack(alignment: .bottom, spacing: trendBarGap) {
-                ForEach(bars) { bar in
+                ForEach(Array(bars.enumerated()), id: \.element.id) { index, bar in
                     BarColumn(
                         bar: bar,
                         value: metric(bar),
                         maxValue: maxValue,
-                        isHovered: hoveredBarID == bar.id
+                        isHovered: hoveredBarID == bar.id,
+                        isPeak: bar.id == peakID,
+                        index: index,
+                        risen: risen
                     )
                     .onHover { hovering in
                         hoveredBarID = hovering ? bar.id : (hoveredBarID == bar.id ? nil : hoveredBarID)
                     }
                 }
             }
+            // Bars spring up from the baseline left-to-right on appear (the
+            // Health/Stocks chart entrance). Reduce Motion shows them at full
+            // height instantly.
+            .onAppear { risen = true }
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: trendChartHeight, alignment: .bottom)
 
+            // Average baseline: a quiet dashed rule with a small "avg" tag at the
+            // right end, suppressed when it would collide with the peak near the top.
             GeometryReader { geo in
+                let y = geo.size.height - (geo.size.height * avgFraction)
                 Path { p in
-                    let y = geo.size.height - (geo.size.height * avgFraction)
                     p.move(to: CGPoint(x: 0, y: y))
                     p.addLine(to: CGPoint(x: geo.size.width, y: y))
                 }
-                .stroke(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .stroke(Color.secondary.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                if avgFraction < 0.85 {
+                    Text("avg")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        .position(x: geo.size.width - 14, y: y - 7)
+                }
             }
             .frame(height: trendChartHeight)
             .allowsHitTesting(false)
         }
         .frame(height: trendChartHeight)
         .overlay(alignment: .bottomLeading) {
-            // Floats below the chart without taking layout space. Opaque dark card hides
-            // whatever sits beneath it (mini stats, activity rows).
-            if let hoveredBar {
-                BarTooltipCard(bar: hoveredBar, value: metric(hoveredBar), formatValue: formatValue)
-                    .padding(.top, 6)
-                    .offset(y: 92)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-                    .zIndex(10)
+            // Floats below the chart without taking layout space. Animation is
+            // scoped HERE (keyed on the hovered bar) instead of on the whole
+            // ZStack, so a hover scrub no longer re-animates all 19 bars + the
+            // avg-line GeometryReader every frame.
+            Group {
+                if let hoveredBar {
+                    BarTooltipCard(bar: hoveredBar, value: metric(hoveredBar), formatValue: formatValue)
+                        .padding(.top, 6)
+                        .offset(y: 92)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                        .zIndex(10)
+                }
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: hoveredBarID)
         }
-        .animation(.easeInOut(duration: 0.12), value: hoveredBarID)
     }
 
     private var hoveredBar: TrendBar? {
@@ -286,35 +345,89 @@ private struct TrendChart: View {
     }
 }
 
+/// Shown in place of the bar chart when the window has no usage at all, instead
+/// of rendering a row of empty stub bars.
+private struct TrendEmptyState: View {
+    let days: Int
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar")
+                .font(.system(size: 22))
+                .foregroundStyle(.tertiary)
+            Text("No usage in the last \(days) days")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: trendChartHeight)
+    }
+}
+
 private struct BarColumn: View {
     let bar: TrendBar
     let value: Double
     let maxValue: Double
     let isHovered: Bool
+    var isPeak: Bool = false
+    var index: Int = 0
+    var risen: Bool = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let fraction = maxValue > 0 ? CGFloat(value / maxValue) : 0
+        let raw = maxValue > 0 ? CGFloat(value / maxValue) : 0
+        // Floor non-zero days so a small day reads as a real bar, not noise,
+        // even when one outlier dominates the scale.
+        let fraction = value > 0 ? max(raw, 0.06) : raw
         let height = max(2, trendChartHeight * fraction)
 
         VStack(spacing: 2) {
             Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 2)
-                .fill(barColor)
+            UnevenRoundedRectangle(topLeadingRadius: 3.5, bottomLeadingRadius: 0,
+                                   bottomTrailingRadius: 0, topTrailingRadius: 3.5,
+                                   style: .continuous)
+                .fill(barFill)
                 .frame(width: trendBarWidth, height: height)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 2)
+                    UnevenRoundedRectangle(topLeadingRadius: 3.5, bottomLeadingRadius: 0,
+                                           bottomTrailingRadius: 0, topTrailingRadius: 3.5,
+                                           style: .continuous)
                         .stroke(Theme.brandAccent.opacity(isHovered ? 0.9 : 0), lineWidth: 1)
                 )
                 .scaleEffect(x: isHovered ? 1.08 : 1.0, y: 1.0, anchor: .bottom)
-                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
+                // Entrance: spring up from the baseline, staggered by column index.
+                .scaleEffect(x: 1.0, y: (reduceMotion || risen) ? 1.0 : 0.0, anchor: .bottom)
+                .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.82).delay(Double(index) * 0.02), value: risen)
         }
         .contentShape(Rectangle())
+        .accessibilityElement()
+        .accessibilityLabel(bar.date)
+        .accessibilityValue(value > 0 ? accessibilityValueText : "no usage")
     }
 
-    private var barColor: Color {
-        if bar.isToday { return Theme.brandAccent }
-        if value <= 0 { return Color.secondary.opacity(0.15) }
-        return isHovered ? Theme.brandAccent.opacity(0.85) : Theme.brandAccent.opacity(0.55)
+    private var accessibilityValueText: String {
+        value >= 1_000_000 ? String(format: "%.1f million", value / 1_000_000)
+            : value >= 1_000 ? String(format: "%.0f thousand", value / 1_000)
+            : String(format: "%.0f", value)
+    }
+
+    /// Vertical gradient caps: today and the peak get the brightest, most
+    /// saturated fills; ordinary days a softer accent; gap/zero days a flat
+    /// low-opacity neutral. Accent-agnostic (all from preset tokens).
+    private var barFill: AnyShapeStyle {
+        if value <= 0 { return AnyShapeStyle(Color.secondary.opacity(0.15)) }
+        if bar.isToday {
+            return AnyShapeStyle(LinearGradient(colors: [Theme.brandAccentLight, Theme.brandAccent],
+                                                startPoint: .top, endPoint: .bottom))
+        }
+        if isPeak {
+            return AnyShapeStyle(LinearGradient(colors: [Theme.brandAccentLight, Theme.brandAccentDeep],
+                                                startPoint: .top, endPoint: .bottom))
+        }
+        let top = isHovered ? 0.95 : 0.70
+        let bottom = isHovered ? 0.70 : 0.45
+        return AnyShapeStyle(LinearGradient(colors: [Theme.brandAccent.opacity(top), Theme.brandAccent.opacity(bottom)],
+                                            startPoint: .top, endPoint: .bottom))
     }
 }
 
@@ -391,7 +504,10 @@ private struct BarTooltipCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(borderStroke, lineWidth: 0.5)
         )
-        .shadow(color: Color.black.opacity(0.35), radius: 10, y: 4)
+        // Two-layer elevation (wide ambient + tight contact) so the tooltip reads
+        // as genuinely floating, the way AppKit popovers cast light.
+        .shadow(color: .black.opacity(0.28), radius: 12, y: 6)
+        .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
     }
 
     private func formatTokensCompact(_ n: Double) -> String {
@@ -738,8 +854,17 @@ private struct PulseTile: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.secondary.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(LinearGradient(colors: [.white.opacity(0.06), .clear], startPoint: .top, endPoint: .bottom))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.10), radius: 3, y: 1)
         )
     }
 }
@@ -772,8 +897,17 @@ private struct OptimizeSavingsBadge: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Theme.brandAccent.opacity(0.10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(LinearGradient(colors: [.white.opacity(0.06), .clear], startPoint: .top, endPoint: .bottom))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.10), radius: 3, y: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -803,9 +937,13 @@ private struct OptimizeSavingsBadge: View {
 
 private struct StatsInsight: View {
     let payload: MenubarPayload
+    @State private var cachedStats: AllStats?
 
     var body: some View {
-        let stats = computeAllStats(payload: payload)
+        // Memoized: the synchronous fallback computes once on first render (no
+        // blank frame); thereafter the cached value is reused and only
+        // recomputed when memoKey changes (.task below).
+        let stats = cachedStats ?? computeAllStats(payload: payload)
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 14) {
@@ -840,7 +978,13 @@ private struct StatsInsight: View {
                 }
             }
         }
+        .task(id: memoKey) { cachedStats = computeAllStats(payload: payload) }
     }
+
+    /// Recompute only when the payload identity OR the display currency changes
+    /// — not on every body eval. computeAllStats walks the full history plus a
+    /// ~400-day streak loop, so this keeps quiet-tick / hover re-evals cheap.
+    private var memoKey: String { "\(payload.generated)|\(CurrencyState.shared.rate)" }
 }
 
 private struct StatRow: View {
@@ -1030,7 +1174,7 @@ private struct PlanInsight: View {
                 }
             }
 
-            OptimizeSavingsBadge(payload: store.payload)
+            OptimizeSavingsBadge(payload: store.currentPayload)
         }
         .task(id: usage.fetchedAt) {
             await recomputeProjections(usage: usage)
