@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.4.9 - 2026-06-12
+
+Sync with upstream: ten ported fixes and features, including a critical
+live-pricing fix for the running model and two macOS menubar reliability fixes.
+
+### Added
+- **Fable 5 / Mythos 5 pricing + display names.** The running CLI reports
+  `claude-fable-5`, which had no snapshot entry and so priced at **$0**; seeded
+  launch pricing ($10/M input, $50/M output) until LiteLLM indexes them.
+  (upstream #463)
+- **Mux (coder) provider.** Reads `~/.mux` sessions (incl. nested sub-agent
+  transcripts), strips the `provider:` model prefix so costs price correctly.
+  (upstream #438)
+- **GitHub Copilot JetBrains (IntelliJ/DataGrip) sessions** are now discovered
+  and parsed. (upstream #433)
+- **Chinese Yuan (CNY)** currency. (upstream #430)
+
+### Fixed
+- **Menubar no longer wedges on "Loading…" under load.** The blocking
+  `process.waitUntilExit()` on the cooperative thread pool was replaced with an
+  async `terminationHandler` wait, plus a spawn-concurrency cap so a wake-burst
+  of refreshes can't fan out into dozens of node processes. (upstream #462)
+- **macOS 27 right-click menu restored** via a global right-mouse monitor (the
+  system no longer routes right-clicks to the status-item action). (upstream #472)
+- **Bounded all outbound HTTP** (pricing + currency) with an 8s timeout so a
+  half-open network after wake-from-sleep can't hang the daily refresh — the
+  same wedge class as the menubar loader. (upstream #448)
+- **String `content` no longer crashes the parser.** Some agents write a
+  message's `content` as a plain string; a raw string hitting `.filter` threw
+  mid-parse and, because the 365-day backfill swallows errors, silently wiped
+  the entire trend/history. (upstream #441/#450)
+- **Codex forked-session dedup is content-addressed** by the full token
+  breakdown, not just the cumulative total, so a genuinely divergent fork turn
+  that reaches the same total isn't undercounted. (upstream #458)
+- **Nested workflow/ultracode sub-agent transcripts counted.** Usage in
+  `subagents/workflows/<wf>/agent-*.jsonl` was missed by the flat scan.
+  (upstream #470/#471)
+- **Copilot project inference works on Windows paths** (split on either path
+  separator). (upstream #456)
+
 ## 2.4.8 - 2026-06-11
 
 A large macOS menubar overhaul — performance, a best-in-class visual + motion

@@ -10,6 +10,7 @@ import { kiloCode } from './kilo-code.js'
 import { kimi } from './kimi.js'
 import { kiro } from './kiro.js'
 import { mistralVibe } from './mistral-vibe.js'
+import { mux } from './mux.js'
 import { openclaw } from './openclaw.js'
 import { pi, omp } from './pi.js'
 import { qwen } from './qwen.js'
@@ -17,7 +18,7 @@ import { rooCode } from './roo-code.js'
 import type { Provider, SessionSource } from './types.js'
 
 /// Eagerly-imported providers: no native deps, cheap to load on every CLI invocation.
-const coreProviders: Provider[] = [claude, cline, codebuff, codex, copilot, droid, gemini, ibmBob, kimi, kiloCode, kiro, mistralVibe, openclaw, pi, omp, qwen, rooCode]
+const coreProviders: Provider[] = [claude, cline, codebuff, codex, copilot, droid, gemini, ibmBob, kimi, kiloCode, kiro, mistralVibe, mux, openclaw, pi, omp, qwen, rooCode]
 
 /// Lazy-loaded providers: open native sqlite / large json on disk, may fail when the
 /// underlying tool isn't installed. Each entry is a literal `() => import(...)` so the

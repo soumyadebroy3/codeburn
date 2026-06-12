@@ -3,7 +3,7 @@ import { providers, getAllProviders } from '../src/providers/index.js'
 
 describe('provider registry', () => {
   it('has core providers registered synchronously', () => {
-    expect(providers.map(p => p.name)).toEqual(['claude', 'cline', 'codebuff', 'codex', 'copilot', 'droid', 'gemini', 'ibm-bob', 'kimi', 'kilo-code', 'kiro', 'mistral-vibe', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
+    expect(providers.map(p => p.name)).toEqual(['claude', 'cline', 'codebuff', 'codex', 'copilot', 'droid', 'gemini', 'ibm-bob', 'kimi', 'kilo-code', 'kiro', 'mistral-vibe', 'mux', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
   })
 
   it('codebuff tool display names normalize codebuff-native names to canonical set', () => {

@@ -7,6 +7,7 @@ import Foundation
 private let maxPayloadBytes = 20 * 1024 * 1024
 private let maxStderrBytes = 256 * 1024
 private let spawnTimeoutSeconds: UInt64 = 45
+private let maxConcurrentSpawns = 6
 
 enum DataClientError: Error {
     case spawn(String)
@@ -47,13 +48,24 @@ struct DataClient {
         let exitCode: Int32
     }
 
+    /// Caps concurrent CLI spawns so a wake-burst of refreshes can't fan out into
+    /// dozens of node processes at once.
+    private static let spawnLimiter = AsyncSemaphore(maxConcurrentSpawns)
+
     private static func runCLI(subcommand: [String]) async throws -> ProcessResult {
+        await spawnLimiter.acquire()
+        defer { Task { await spawnLimiter.release() } }
         let process = CodeburnCLI.makeProcess(subcommand: subcommand)
 
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        // Bridge the process exit to an async signal set up BEFORE run(), so the
+        // exit can never be missed and the wait never blocks a worker thread.
+        let exitSignal = ProcessExitSignal()
+        process.terminationHandler = { _ in exitSignal.fulfill() }
 
         do {
             try process.run()
@@ -96,7 +108,13 @@ struct DataClient {
                 process.terminate()
             }
         }
-        process.waitUntilExit()
+        // Wait for exit via terminationHandler, never by parking a worker thread
+        // in waitUntilExit. That blocking syscall on Swift's cooperative pool
+        // wedged the menubar on "Loading…" under load: enough concurrent slow
+        // CLIs parked every worker thread inside waitUntilExit, leaving nothing
+        // free to drain pipes or fire the timeout. terminationHandler fires on a
+        // Foundation-managed queue and blocks nothing.
+        await exitSignal.wait()
 
         if out.count >= maxPayloadBytes {
             throw DataClientError.outputTooLarge
@@ -123,5 +141,62 @@ struct DataClient {
             }
             return buffer
         }.value
+    }
+}
+
+/// One-shot async signal that bridges `Process.terminationHandler` (invoked on a
+/// Foundation-internal queue) to an awaiting task without blocking a worker
+/// thread. Safe against fulfill-before-wait.
+final class ProcessExitSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fulfilled = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func fulfill() {
+        lock.lock()
+        if fulfilled { lock.unlock(); return }
+        fulfilled = true
+        let cont = continuation
+        continuation = nil
+        lock.unlock()
+        cont?.resume()
+    }
+
+    func wait() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if fulfilled {
+                lock.unlock()
+                cont.resume()
+            } else {
+                continuation = cont
+                lock.unlock()
+            }
+        }
+    }
+}
+
+/// Minimal actor-based async semaphore. Caps concurrency without blocking a
+/// thread (unlike DispatchSemaphore.wait()).
+actor AsyncSemaphore {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(_ count: Int) { available = count }
+
+    func acquire() async {
+        if available > 0 {
+            available -= 1
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            available += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

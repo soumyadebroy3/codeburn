@@ -7,6 +7,7 @@ import { homedir } from 'node:os'
 import { readSessionLines } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
 import { readCachedCodexResults, writeCachedCodexResults, getCachedCodexProject, fingerprintFile } from '../codex-cache.js'
+import { normalizeContentBlocks } from '../content-utils.js'
 import type { Provider, SessionSource, SessionParser, ParsedProviderCall } from './types.js'
 
 const modelDisplayNames: Record<string, string> = {
@@ -242,7 +243,7 @@ function handleSessionMeta(state: CodexParserState, entry: CodexEntry, fallbackI
 }
 
 function handleUserMessage(state: CodexParserState, entry: CodexEntry): void {
-  const texts = (entry.payload?.content ?? [])
+  const texts = normalizeContentBlocks(entry.payload?.content)
     .filter(c => c.type === 'input_text')
     .map(c => c.text ?? '')
     .filter(Boolean)
@@ -250,7 +251,7 @@ function handleUserMessage(state: CodexParserState, entry: CodexEntry): void {
 }
 
 function handleAssistantMessage(state: CodexParserState, entry: CodexEntry): void {
-  const texts = (entry.payload?.content ?? [])
+  const texts = normalizeContentBlocks(entry.payload?.content)
     .filter(c => c.type === 'output_text' || c.type === 'text')
     .map(c => c.text ?? '')
   state.pendingOutputChars += texts.join('').length
@@ -390,7 +391,11 @@ function handleTokenCount(state: CodexParserState, entry: CodexEntry, seenKeys: 
   const timestamp = entry.timestamp ?? ''
   // Key by the fork's origin id (when present) so a forked session dedups
   // against its parent's tokens; drop the timestamp so replays collapse.
-  const dedupKey = `codex:${state.forkedFromId || state.sessionId}:${cumulativeTotal}`
+  // Content-address by the full cumulative breakdown, not just the total: two
+  // distinct turns can sum to the same total with different input/output/cache
+  // splits, and keying on the sum alone would silently drop the second. (#458)
+  const ct = info.total_token_usage
+  const dedupKey = `codex:${state.forkedFromId || state.sessionId}:${cumulativeTotal}:${ct?.input_tokens ?? 0}:${ct?.cached_input_tokens ?? 0}:${ct?.output_tokens ?? 0}:${ct?.reasoning_output_tokens ?? 0}`
 
   if (seenKeys.has(dedupKey)) return
   seenKeys.add(dedupKey)

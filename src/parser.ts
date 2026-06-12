@@ -2,6 +2,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { readSessionLines } from './fs-utils.js'
 import { calculateCost, getShortModelName } from './models.js'
+import { normalizeContentBlocks } from './content-utils.js'
 import { discoverAllSessions, getProvider } from './providers/index.js'
 import { flushCodexCache } from './codex-cache.js'
 import { flushAntigravityCache } from './providers/antigravity.js'
@@ -261,8 +262,12 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     webSearchRequests: positiveNumber(usage.server_tool_use?.web_search_requests),
   }
 
-  const tools = extractToolNames(msg.content ?? [])
-  const skills = extractSkillNames(msg.content ?? [])
+  // Defensive: a message whose `content` is a string (not an array of blocks)
+  // would crash the helpers below; normalize so one bad record can't abort the
+  // whole backfill and silently empty the trend/history (issue #441).
+  const contentBlocks = normalizeContentBlocks(msg.content)
+  const tools = extractToolNames(contentBlocks)
+  const skills = extractSkillNames(contentBlocks)
   // calculateCost contract (upstream #317): param 4 is the TOTAL cache
   // creation tokens (including 1h portion). The function derives the 5m
   // portion internally as `max(0, total - 1h)`.
@@ -277,7 +282,7 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     cacheCreation1h,
   )
 
-  const bashCmds = extractBashCommandsFromContent(msg.content ?? [])
+  const bashCmds = extractBashCommandsFromContent(contentBlocks)
 
   return {
     provider: 'claude',
@@ -595,28 +600,33 @@ async function parseSessionFile(
   }
 }
 
-async function collectJsonlFiles(dirPath: string): Promise<string[]> {
+// Recursively collect every `.jsonl` under `dir` into `out`. Subagent
+// transcripts can nest more than one level deep — workflow/ultracode runs
+// write `subagents/workflows/<wf>/agent-*.jsonl` — so a flat one-level scan
+// misses them and their usage goes uncounted. (upstream #471)
+async function collectJsonlInto(dir: string, out: Set<string>): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) await collectJsonlInto(p, out)
+    else if (e.name.endsWith('.jsonl')) out.add(p)
+  }
+}
+
+export async function collectJsonlFiles(dirPath: string): Promise<string[]> {
   const files = await readdir(dirPath).catch(() => [])
   const jsonlFiles = new Set(files.filter(f => f.endsWith('.jsonl')).map(f => join(dirPath, f)))
 
   // Some providers (e.g. Kimi for its agent-call sessions) stash subagent
   // .jsonl files in a `subagents/` subdirectory directly under the
   // top-level session dir, not nested under each session-named entry.
-  // Scan both layouts and dedupe through a Set so a path that appears
-  // in both views isn't double-counted. Ports upstream PR #340.
-  const directSubagentsPath = join(dirPath, 'subagents')
-  const directSubFiles = await readdir(directSubagentsPath).catch(() => [])
-  for (const sf of directSubFiles) {
-    if (sf.endsWith('.jsonl')) jsonlFiles.add(join(directSubagentsPath, sf))
-  }
-
+  // Scan both layouts (recursing for nested workflow runs) and dedupe
+  // through the Set so a path seen in both views isn't double-counted.
+  // Ports upstream PR #340 + #471.
+  await collectJsonlInto(join(dirPath, 'subagents'), jsonlFiles)
   for (const entry of files) {
     if (entry.endsWith('.jsonl')) continue
-    const subagentsPath = join(dirPath, entry, 'subagents')
-    const subFiles = await readdir(subagentsPath).catch(() => [])
-    for (const sf of subFiles) {
-      if (sf.endsWith('.jsonl')) jsonlFiles.add(join(subagentsPath, sf))
-    }
+    await collectJsonlInto(join(dirPath, entry, 'subagents'), jsonlFiles)
   }
 
   return [...jsonlFiles]
