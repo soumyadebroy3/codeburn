@@ -10,10 +10,11 @@ export const STREAM_THRESHOLD_BYTES = 8 * 1024 * 1024
 
 // Line-by-line streaming has bounded memory (one line at a time) and is not
 // constrained by V8's string limit, so it can safely handle multi-GB session
-// files. The cap here is purely a sanity check against pathological inputs;
-// real Codex sessions for heavy users have been observed at 250+ MB and will
-// continue to grow as context windows expand.
-export const MAX_STREAM_SESSION_FILE_BYTES = 2 * 1024 * 1024 * 1024
+// files. Heavy Codex sessions routinely reach several GB (image-heavy compacted
+// turns), so the cap is generous and exists only to guard against truly
+// pathological inputs. When a file IS skipped, notice() surfaces it (always on,
+// not verbose-gated) so a dropped session never silently understates usage.
+export const MAX_STREAM_SESSION_FILE_BYTES = 4 * 1024 * 1024 * 1024
 
 function verbose(): boolean {
   return process.env.CODEBURN_VERBOSE === '1'
@@ -21,6 +22,12 @@ function verbose(): boolean {
 
 export function warn(msg: string): void {
   if (verbose()) process.stderr.write(`codeburn: ${msg}\n`)
+}
+
+// Always surfaced (not verbose-gated): dropping an entire session file silently
+// understates reported usage with no signal, so oversize skips use this.
+function notice(msg: string): void {
+  process.stderr.write(`codeburn: ${msg}\n`)
 }
 
 // Open + fstat + read on the SAME file descriptor closes the TOCTOU window
@@ -106,7 +113,7 @@ export async function* readSessionLines(filePath: string): AsyncGenerator<string
     return
   }
   if (size > MAX_STREAM_SESSION_FILE_BYTES) {
-    warn(`skipped oversize file ${filePath} (${size} bytes > stream cap ${MAX_STREAM_SESSION_FILE_BYTES})`)
+    notice(`skipped oversize session ${filePath} (${size} bytes > cap ${MAX_STREAM_SESSION_FILE_BYTES}); its usage is NOT counted`)
     return
   }
 

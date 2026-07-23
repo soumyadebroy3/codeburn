@@ -109,6 +109,9 @@ struct CurrentBlock: Codable, Sendable {
     let cacheReadTokens: Int
     let cacheWriteTokens: Int
     let cacheHitPercent: Double
+    /// Codex credits consumed in the period; 0 when there is no Codex usage.
+    /// Feeds the optional third hero metric (cost → tokens → credits). (#568)
+    let codexCredits: Double
     let topActivities: [ActivityEntry]
     let topModels: [ModelEntry]
     let providers: [String: Double]
@@ -123,7 +126,7 @@ extension CurrentBlock {
     enum CodingKeys: String, CodingKey {
         case label, cost, calls, sessions, oneShotRate, inputTokens, outputTokens,
              cacheReadTokens, cacheWriteTokens,
-             cacheHitPercent, topActivities, topModels, providers, topProjects,
+             cacheHitPercent, codexCredits, topActivities, topModels, providers, topProjects,
              modelEfficiency, topSessions, retryTax, routingWaste
     }
     // Custom decode so older CLI builds whose menubar payload is missing
@@ -145,6 +148,9 @@ extension CurrentBlock {
         cacheReadTokens = try c.decodeIfPresent(Int.self, forKey: .cacheReadTokens) ?? 0
         cacheWriteTokens = try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0
         cacheHitPercent = try c.decode(Double.self, forKey: .cacheHitPercent)
+        // decodeIfPresent so payloads from older CLI builds (before codex credits
+        // were forwarded) still decode, reporting 0 credits until the CLI updates.
+        codexCredits = try c.decodeIfPresent(Double.self, forKey: .codexCredits) ?? 0
         topActivities = try c.decode([ActivityEntry].self, forKey: .topActivities)
         topModels = try c.decode([ModelEntry].self, forKey: .topModels)
         providers = try c.decode([String: Double].self, forKey: .providers)
@@ -265,6 +271,7 @@ extension MenubarPayload {
             cacheReadTokens: 0,
             cacheWriteTokens: 0,
             cacheHitPercent: 0,
+            codexCredits: 0,
             topActivities: [],
             topModels: [],
             providers: [:],

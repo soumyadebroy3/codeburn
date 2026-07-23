@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.5.0 - 2026-07-23
+
+Major upstream-parity release. Alongside new providers and a batch of
+cost-accuracy fixes, this adds the context/acting features and two greenfield
+subsystems: opt-in LAN **device sharing** (mutual-TLS) and a local **web
+dashboard**. Nothing network-facing is on by default.
+
+### Added
+- **Device sharing (opt-in, local network).** `codeburn share` advertises this
+  Mac over mDNS; `codeburn devices` discovers, pairs with, and pulls usage from
+  your other Macs, and `status --scope combined` folds them into one view.
+  Mutual-TLS with trust-on-first-use certificate pinning, a 6-digit PIN and an
+  approve-style matching-code flow, and bearer tokens bound to the peer's cert
+  (a stolen token replayed from another device is refused). Only sanitized
+  aggregates ever leave the machine — never project names, paths, or
+  per-session detail. (upstream #532/#536/#567/#568)
+- **Local web dashboard.** `codeburn web` opens a **loopback-only** (127.0.0.1,
+  Host/Origin-guarded) React dashboard: hero + metric cards, a granular usage
+  timeline, and By Tool / Top Projects / Model Efficiency / Skills / MCP /
+  Subagents panels, plus a context explorer and the device-sharing UI.
+  (upstream #573/#582/#589/#533/#534/#554/#586)
+- **Context token breakdown** — `codeburn context [session]`: what fills the
+  window, by role, block type, and tool (Claude + Codex).
+- **Acting layer** — `codeburn optimize --apply` and `codeburn act
+  list|undo|report`: apply optimize findings as journaled, reversible edits.
+- **Overview, audit, and price-override commands**; Codex credits (CLI + a
+  cost → tokens → **credits** hero metric in the macOS menubar).
+- **Lifetime (all-time) period** across the CLI and web dashboard, with weekly
+  timeline bucketing for multi-year spans.
+- **New providers**: Grok, zcode, Hermes, Open Design, Zed, LingTai, Devin, and
+  ZeroStack. (upstream Tier 4)
+- **Cursor real composer-context tokens** and Cursor-published composer pricing.
+  (upstream #512/#575)
+
+### Fixed
+- **Cost-accuracy / data-integrity** batch: model-alias and pricing-variant
+  fixes, per-provider daily-cache accounting (cache-version bump forces a
+  one-time re-hydration), and menubar-json fast-path parse-once. (Tiers 1–2)
+- **ZeroStack** no longer ~10× undercounts (cache tokens were dropped); **Zed**
+  invalid-UTF-8 threads no longer crash the run; **Grok** prices correctly
+  (dead alias → `grok-code-fast-1`).
+
+### Security
+- Device-sharing pairing confirmation code widened **3 → 6 digits**
+  (collision-resistant); the manual host+PIN pairing path now prints a
+  trust-the-address warning and points at discover-and-approve as the safer
+  default. Egress boundary verified: the sharing path never computes the
+  enriched web-only breakdowns, and payloads are sanitized on send and re-sanitized
+  on receipt.
+
 ## 2.4.9 - 2026-06-12
 
 Sync with upstream: ten ported fixes and features, including a critical

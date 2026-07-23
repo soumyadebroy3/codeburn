@@ -41,6 +41,9 @@ const toolNameMap: Record<string, string> = {
   find_files: 'Glob',
   webSearch: 'WebSearch',
   web_search: 'WebSearch',
+  web_fetch: 'WebFetch',
+  code: 'Read',
+  subagent: 'Agent',
 }
 
 type KiroChatMessage = {
@@ -271,6 +274,7 @@ export function createKiroProvider(agentDirOverride?: string, workspaceStorageDi
     },
 
     toolDisplayName(rawTool: string): string {
+      if (rawTool.startsWith('mcp__')) return rawTool
       return toolNameMap[rawTool] ?? rawTool
     },
 

@@ -29,6 +29,12 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Environment(AppStore.self) private var store
 
+    // AppStorage (not a computed Binding over UsageRefreshCadence.current):
+    // a plain UserDefaults write does not invalidate the view, so the picker
+    // label would never reflect the selection even though the value landed.
+    @AppStorage(UsageRefreshCadence.defaultsKey)
+    private var usageRefreshSeconds: Int = UsageRefreshCadence.default.rawValue
+
     var body: some View {
         Form {
             Section("Display") {
@@ -55,6 +61,21 @@ private struct GeneralSettingsTab: View {
                         }.tag(preset)
                     }
                 }
+            }
+
+            Section("Usage Refresh") {
+                Picker("Update every", selection: Binding(
+                    get: { UsageRefreshCadence(rawValue: usageRefreshSeconds) ?? .default },
+                    set: { usageRefreshSeconds = $0.rawValue }
+                )) {
+                    ForEach(UsageRefreshCadence.allCases) { cadence in
+                        Text(cadence.label).tag(cadence)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("How often the menubar figure re-reads your local session data. Auto refreshes every 30 seconds while you're plugged in and backs off on battery; Manual only refreshes when you open the popover or click Refresh Now.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
 
             Section("Alerts") {

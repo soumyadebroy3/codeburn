@@ -6,7 +6,9 @@ import { homedir } from 'node:os'
 
 import type { ParsedProviderCall } from './providers/types.js'
 
-const CODEX_CACHE_VERSION = 2
+// v3: attribute MCP calls emitted as event_msg/mcp_tool_call_end (issue #478).
+// Recent Codex sessions cached under v2 dropped these, so force a re-parse.
+const CODEX_CACHE_VERSION = 3
 const CACHE_FILE = 'codex-results.json'
 const FINGERPRINT_BYTES = 256
 

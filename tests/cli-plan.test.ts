@@ -45,7 +45,7 @@ describe('codeburn plan command', () => {
     } finally {
       await rm(home, { recursive: true, force: true })
     }
-  })
+  }, 30_000) // real CLI spawns via tsx (compile-on-run ~3.5s each); 2 spawns exceed the 5s default
 
   it('shows invalid reset-day value in error output', async () => {
     const home = await mkdtemp(join(tmpdir(), 'codeburn-cli-plan-'))
@@ -57,5 +57,5 @@ describe('codeburn plan command', () => {
     } finally {
       await rm(home, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

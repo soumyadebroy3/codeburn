@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let updateChecker = UpdateChecker()
     /// Held for the lifetime of the app to opt out of App Nap and Automatic Termination.
     private var backgroundActivity: NSObjectProtocol?
+    /// True while the displays are asleep. The refresh loop skips spawning the
+    /// (expensive, full-Node-process) CLI fetch entirely then: nobody can see
+    /// the menubar, so a fetch is pure battery burn (#647).
+    private var displayAsleep = false
     private var pendingRefreshWork: DispatchWorkItem?
     private var refreshLoopTask: Task<Void, Never>?
     private var forceRefreshTask: Task<Void, Never>?
@@ -120,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.displayAsleep = false
                 self?.store.resetLoadingState()
                 self?.forceRefresh()
                 if self?.refreshLoopTask == nil { self?.startRefreshLoop() }
@@ -131,7 +136,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.forceRefresh() }
+            Task { @MainActor in
+                self?.displayAsleep = false
+                self?.forceRefresh()
+            }
+        }
+
+        // Display sleep without system sleep (clamshell displays off, screen
+        // saver / energy settings) previously kept the full 30s spawn cadence
+        // running for hours. Skip refresh spawns until the screens wake. (#647)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // If a sleep/wake pair ever reorders (two Task hops), a stuck
+            // displayAsleep=true self-heals on the next popover open (which
+            // clears it) — the background loop resumes then. (#648)
+            Task { @MainActor in self?.displayAsleep = true }
         }
     }
 
@@ -141,7 +163,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.forceRefresh() }
+            Task { @MainActor in
+                // The LaunchAgent posts this every 30s; skip while the displays
+                // sleep so this external tick doesn't defeat the idle-energy
+                // backoff (nobody's looking). Real wakes/opens refresh via their
+                // own paths. (#648)
+                guard self?.displayAsleep == false else { return }
+                self?.forceRefresh()
+            }
         }
     }
 
@@ -311,12 +340,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     // skip below.
                     self.refreshStatusButton()
                 }
-                // Skip the loop's tick if a wake / manual / distributed-
-                // notification refresh just ran. Without this gate, every
-                // wake produced two refreshes (forceRefresh from the wake
-                // observer plus the loop's natural tick).
+                // Cadence gate (#647): the timer keeps ticking every 30s
+                // (cheap), but the expensive part — each usage refresh is a full
+                // Node process at 100%+ CPU for seconds — backs off. With the
+                // popover closed, on battery / Low Power the spawn cadence
+                // stretches (150s / 300s); while the displays sleep it stops
+                // entirely; in Manual mode it never auto-spawns. An open popover
+                // always gets the active 30s cadence, and popover-open
+                // forceRefresh catches any staleness the backoff introduced.
+                // `interval >= 30` also subsumes the old 5s wake-dedup gate.
                 let sinceLast = Date().timeIntervalSince(self.lastRefreshTime)
-                if sinceLast >= 5 {
+                let usageInterval = RefreshCadence.interval(
+                    mode: UsageRefreshCadence.current,
+                    popoverOpen: self.popover?.isShown ?? false,
+                    onBattery: PowerSource.isOnBattery(),
+                    lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                )
+                let maySpawnUsage = !self.displayAsleep
+                    && (usageInterval.map { sinceLast >= $0 } ?? false)
+                if maySpawnUsage {
                     if self.store.selectedPeriod != .today || self.store.selectedProvider != .all {
                         async let quiet: Void = self.store.refreshQuietly(period: .today)
                         // force:false so a key refreshed <30s ago by a switch/wake
@@ -619,6 +661,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // restart the loop if it died, and pull a fresh fetch if the visible
             // data has gone stale — so opening always shows current usage.
             store.clearWedgedLoading()
+            // An open popover proves the display is on — self-heal any stuck
+            // displayAsleep so the spawn gate can't stay latched off. (#648 fix)
+            displayAsleep = false
             if refreshLoopTask == nil { startRefreshLoop() }
             if store.isCurrentDataStale { forceRefresh() }
             // Warm the other common periods (all-provider) so the first click on

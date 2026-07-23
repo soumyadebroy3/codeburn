@@ -725,6 +725,9 @@ final class AppStore {
             if let pct = usage.sevenDaySonnetPercent {
                 details.append(.init(label: "Weekly · Sonnet", percent: pct / 100, resetsAt: usage.sevenDaySonnetResetsAt))
             }
+            for scoped in usage.scopedWeekly {
+                details.append(.init(label: "Weekly · \(scoped.label)", percent: scoped.percent / 100, resetsAt: scoped.resetsAt))
+            }
         }
         let plan = subscription?.tier.displayName
         return QuotaSummary(providerFilter: filter, connection: connection, primary: primary, details: details, planLabel: plan, footerLines: [])
@@ -852,7 +855,7 @@ final class AppStore {
 }
 
 enum SupportedCurrency: String, CaseIterable, Identifiable {
-    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CNY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK
+    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CNY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK, RON
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -874,6 +877,7 @@ enum SupportedCurrency: String, CaseIterable, Identifiable {
         case .MXN: "Mexican Peso"
         case .ZAR: "South African Rand"
         case .DKK: "Danish Krone"
+        case .RON: "Romanian Leu"
         }
     }
 }
@@ -973,6 +977,10 @@ enum SubscriptionLoadState: Sendable, Equatable {
 enum DisplayMetric: String {
     case cost
     case tokens
+    /// Codex credits. Only appears in the hero's tap-cycle when the current
+    /// period actually has Codex credit usage; otherwise the hero cycles
+    /// cost → tokens → cost and a stale `.credits` renders as cost. (#568)
+    case credits
 }
 
 enum InsightMode: String, CaseIterable, Identifiable {

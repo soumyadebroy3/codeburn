@@ -31,7 +31,7 @@ const USD: CurrencyState = { code: 'USD', rate: 1, symbol: '$' }
 
 // Intl renders some currencies with a locale-disambiguated symbol (e.g. CNY as
 // "CN¥" in en) where the bare glyph is what users expect. Override those. (#430)
-const SYMBOL_OVERRIDES: Record<string, string> = { CNY: '¥' }
+const SYMBOL_OVERRIDES: Record<string, string> = { CNY: '¥', RON: 'lei' }
 
 // Intl.NumberFormat throws on invalid ISO 4217 codes, so we use it as a validator
 export function isValidCurrencyCode(code: string): boolean {

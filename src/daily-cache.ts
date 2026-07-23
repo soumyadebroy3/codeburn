@@ -10,15 +10,28 @@ import type { DateRange, ProjectSummary } from './types.js'
 // at the 5-minute rate, so cached historical cost/model/provider/category
 // totals would remain under-reported unless discarded and recomputed from
 // raw sessions. Skips fork-internal v5.
-export const DAILY_CACHE_VERSION = 6
-// MIN_SUPPORTED_VERSION bumped to 6 too. The migration path
+// v7: several providers added since v6 (zerostack, grok, zcode, hermes,
+// open-design, zed, lingtai-tui, devin) parse usage that older binaries
+// skipped, so days cached at v6 omit them and report $0 for those providers
+// across history. Raising MIN_SUPPORTED_VERSION to 7 too forces a one-time
+// full re-hydration so the newly supported providers backfill without a
+// manual cache clear. (upstream #550)
+// v8: cursor accounting changed — conversations now credit their real
+// composer context tokens once (conversation-anchored cursor:composer-input
+// records) instead of the per-bubble text estimate, and composer-* models
+// price at Cursor-published rates rather than the Sonnet proxy. Days finalized
+// at v7 carry the old text-estimate input and sonnet-proxy composer costs, so
+// raising MIN_SUPPORTED_VERSION to 8 forces the one-time full re-hydration
+// that backfills history under the new cursor accounting.
+export const DAILY_CACHE_VERSION = 8
+// MIN_SUPPORTED_VERSION bumped to 8 too. The migration path
 // (isMigratableCache + migrateDays) only fills in missing default fields;
 // it does NOT recompute the providers / categories / models rollups from
 // session data, because those raw sessions are not stored in the cache.
-// So a migrated v4/v5 cache would carry forward stale pricing totals for
-// the full cache retention window. Setting the floor to 6 forces older
+// So a migrated older cache would carry forward stale pricing totals for
+// the full cache retention window. Setting the floor to 8 forces older
 // caches to be discarded and recomputed cleanly.
-const MIN_SUPPORTED_VERSION = 6
+const MIN_SUPPORTED_VERSION = 8
 const DAILY_CACHE_FILENAME = 'daily-cache.json'
 
 export type DailyEntry = {
@@ -214,9 +227,16 @@ export async function ensureCacheHydrated(
   return withDailyCacheLock(async () => {
     let c = await loadDailyCache()
 
-    const hadYesterday = c.days.some(d => d.date >= yesterdayStr)
-    if (hadYesterday) {
-      const freshDays = c.days.filter(d => d.date < yesterdayStr)
+    // Drop any cached entry dated today or later. The cache only ever stores
+    // complete past days (up to yesterday), so a >= today entry can only come
+    // from the clock moving backward or a stale older cache; left in place it
+    // would be served frozen instead of recomputed live. Yesterday and earlier
+    // stay cached, so this does not re-parse already-cached days — which is the
+    // repeated-status-parse win (previously yesterday was dropped and re-parsed
+    // on every run). (upstream #486/#499)
+    const todayStr = toDateString(now)
+    if (c.days.some(d => d.date >= todayStr)) {
+      const freshDays = c.days.filter(d => d.date < todayStr)
       const latestFresh = freshDays.length > 0 ? freshDays.at(-1)!.date : null
       c = { ...c, days: freshDays, lastComputedDate: latestFresh }
     }

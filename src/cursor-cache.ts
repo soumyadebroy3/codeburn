@@ -5,7 +5,14 @@ import { createHash, randomBytes } from 'node:crypto'
 
 import type { ParsedProviderCall } from './providers/types.js'
 
-const CURSOR_CACHE_VERSION = 3
+// Version 4: cursor input accounting changed — conversations with real
+// context tokens on disk (composerData.promptTokenBreakdown.totalUsedTokens /
+// contextTokensUsed) are now credited once via a synthetic
+// cursor:composer-input:<id> record instead of the per-bubble text-length
+// estimate, and composer-* models price at Cursor-published rates rather than
+// a Sonnet proxy. Cached v3 results carry the old text-estimate input and the
+// old composer costs, so they must be re-hydrated.
+const CURSOR_CACHE_VERSION = 4
 const FINGERPRINT_BYTES = 256
 
 type DbFingerprint = { mtimeMs: number; size: number; headHash: string }

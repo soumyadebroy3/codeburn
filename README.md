@@ -114,6 +114,14 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/antigravity.png" width="28" /> | Antigravity | Yes | [antigravity.md](docs/providers/antigravity.md) |
 | <img src="assets/providers/crush.png" width="28" /> | Crush | Yes | [crush.md](docs/providers/crush.md) |
 | | Mux (coder) | Yes | [mux.md](docs/providers/mux.md) |
+| | Devin | Yes | [devin.md](docs/providers/devin.md) |
+| | Grok Build | Yes | [grok.md](docs/providers/grok.md) |
+| | Hermes | Yes | [hermes.md](docs/providers/hermes.md) |
+| | LingTai | Yes | [lingtai-tui.md](docs/providers/lingtai-tui.md) |
+| | Open Design | Yes | [open-design.md](docs/providers/open-design.md) |
+| | Zed | Yes | [zed.md](docs/providers/zed.md) |
+| | ZCode (z.ai) | Yes | [zcode.md](docs/providers/zcode.md) |
+| | Zerostack | Yes | [zerostack.md](docs/providers/zerostack.md) |
 
 Paths shown are for macOS. Linux and Windows equivalents are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/soumyadebroy3/codeburn/issues).
 
@@ -268,6 +276,7 @@ codeburn currency GBP          # set to British Pounds
 codeburn currency AUD          # set to Australian Dollars
 codeburn currency JPY          # set to Japanese Yen
 codeburn currency CNY          # set to Chinese Yuan
+codeburn currency RON          # set to Romanian Leu
 codeburn currency              # show current setting
 codeburn currency --reset      # back to USD
 ```

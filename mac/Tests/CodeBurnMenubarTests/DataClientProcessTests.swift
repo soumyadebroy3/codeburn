@@ -82,3 +82,33 @@ struct AsyncSemaphoreTests {
         #expect(done == count)
     }
 }
+
+// A MenubarPayload decode failure must surface the CLI's actual stdout/stderr so
+// a stray banner on stdout (see #515) is self-diagnosing, not an opaque
+// "not valid JSON". (upstream #547)
+@Suite("CLIDecodeFailure")
+struct CLIDecodeFailureTests {
+    private struct Boom: Error {}
+
+    @Test("surfaces the stdout snippet, byte count, and stderr")
+    func surfacesOutput() {
+        let failure = CLIDecodeFailure(
+            underlying: Boom(),
+            stdoutByteCount: 13,
+            stdoutSnippet: "(node) banner",
+            stderr: "warn: x"
+        )
+        let text = failure.description
+        #expect(text.contains("(node) banner"))
+        #expect(text.contains("13 bytes"))
+        #expect(text.contains("warn: x"))
+    }
+
+    @Test("reports empty stdout distinctly")
+    func emptyStdout() {
+        let failure = CLIDecodeFailure(underlying: Boom(), stdoutByteCount: 0, stdoutSnippet: "", stderr: "")
+        let text = failure.description
+        #expect(text.contains("0 bytes"))
+        #expect(text.contains("<empty>"))
+    }
+}

@@ -51,6 +51,18 @@ describe('getShortModelName', () => {
     expect(getShortModelName('gpt-5.4-mini')).toBe('GPT-5.4 Mini')
   })
 
+  // Regression for #461: spark is a distinct variant, not a reasoning suffix.
+  it('maps gpt-5.3-codex-spark to its own label (not GPT-5.3 Codex)', () => {
+    const name = getShortModelName('gpt-5.3-codex-spark')
+    expect(name).not.toBe('GPT-5.3 Codex')
+    expect(name).toBe('GPT-5.3 Codex Spark')
+  })
+
+  it('maps gpt-5.3-codex reasoning suffixes to the base label', () => {
+    expect(getShortModelName('gpt-5.3-codex-high')).toBe('GPT-5.3 Codex')
+    expect(getShortModelName('gpt-5.3-codex-low')).toBe('GPT-5.3 Codex')
+  })
+
   it('maps claude-opus-4-6 with date suffix', () => {
     expect(getShortModelName('claude-opus-4-6-20260205')).toBe('Opus 4.6')
   })
@@ -394,4 +406,63 @@ describe('Gemini 3.5 Flash variants resolve to canonical id + display (upstream 
       expect(getShortModelName(variant)).toBe('Gemini 3.5 Flash')
     })
   }
+})
+
+describe('provider pricing suffix variants', () => {
+  // minimax-m3 dropped from upstream's list: absent from this fork's snapshot.
+  // -TEE bases are lowercase here: unlike upstream, this fork's getModelCosts
+  // has no case-insensitive (lowerIndex) lookup, so an all-uppercase base like
+  // GLM-4.7-TEE would miss the lowercase snapshot key regardless of #634. The
+  // `/-TEE$/i` strip itself is still case-insensitive and exercised below.
+  const cases: Array<[string, string]> = [
+    ['glm-4.7-TEE', 'glm-4.7'],
+    ['glm-4.7:thinking', 'glm-4.7'],
+    ['kimi-k2.5-TEE', 'kimi-k2.5'],
+    ['deepseek-v4-pro:cloud', 'deepseek-v4-pro'],
+    ['glm-5:thinking', 'glm-5'],
+    ['kimi-k2.6:thinking', 'kimi-k2.6'],
+    ['deepseek-v4-flash:thinking', 'deepseek-v4-flash'],
+  ]
+
+  for (const [input, expectedBase] of cases) {
+    it(`${input} resolves through ${expectedBase}`, () => {
+      const costs = getModelCosts(input)
+      const expected = getModelCosts(expectedBase)
+      expect(costs).not.toBeNull()
+      expect(expected).not.toBeNull()
+      expect(costs!.inputCostPerToken).toBe(expected!.inputCostPerToken)
+      expect(costs!.outputCostPerToken).toBe(expected!.outputCostPerToken)
+    })
+  }
+
+  it('does not strip arbitrary local runtime tags', () => {
+    expect(getModelCosts('qwen3.6:35b-a3b-bf16')).toBeNull()
+  })
+
+  it('does not strip free-tier markers into paid pricing', () => {
+    expect(getModelCosts('mimo-v2-flash:free')).toBeNull()
+  })
+})
+
+describe('observed provider model aliases', () => {
+  const cases: Array<[string, string]> = [
+    ['MiMo-V2-Flash', 'xiaomi/mimo-v2-flash'],
+    ['KAT-Coder-Pro-V1', 'kwaipilot/kat-coder-pro'],
+  ]
+
+  for (const [input, expectedModel] of cases) {
+    it(`${input} resolves through ${expectedModel}`, () => {
+      const costs = getModelCosts(input)
+      const expected = getModelCosts(expectedModel)
+      expect(costs).not.toBeNull()
+      expect(expected).not.toBeNull()
+      expect(costs).toEqual(expected)
+      expect(calculateCost(input, 1_000_000, 1_000_000, 0, 0, 0)).toBeGreaterThan(0)
+    })
+  }
+
+  it('does not map dated Qwen3 Max to a reseller price without provider context', () => {
+    expect(getModelCosts('qwen3-max-2026-01-23')).toBeNull()
+    expect(calculateCost('qwen3-max-2026-01-23', 1_000_000, 1_000_000, 0, 0, 0)).toBe(0)
+  })
 })

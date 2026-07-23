@@ -81,6 +81,20 @@ function userMessage(text: string, timestamp?: string) {
   })
 }
 
+function mcpToolCallEnd(server: string, tool: string, timestamp?: string) {
+  return JSON.stringify({
+    type: 'event_msg',
+    timestamp: timestamp ?? '2026-04-14T10:00:30Z',
+    payload: {
+      type: 'mcp_tool_call_end',
+      call_id: 'call-1',
+      invocation: { server, tool, arguments: {} },
+      duration: '1.2s',
+      result: { Ok: { content: [] } },
+    },
+  })
+}
+
 async function writeSession(dir: string, date: string, filename: string, lines: string[]) {
   const [year, month, day] = date.split('-')
   const sessionDir = join(dir, 'sessions', year!, month!, day!)
@@ -89,6 +103,21 @@ async function writeSession(dir: string, date: string, filename: string, lines: 
   await writeFile(filePath, lines.join('\n') + '\n')
   return filePath
 }
+
+describe('codex provider - model display names', () => {
+  it('maps gpt-5.3-codex-spark to its own label', () => {
+    const provider = createCodexProvider(tmpDir)
+    const name = provider.modelDisplayName('gpt-5.3-codex-spark')
+    expect(name).not.toBe('GPT-5.3 Codex')
+    expect(name).toBe('GPT-5.3 Codex Spark')
+  })
+
+  it('maps gpt-5.3-codex reasoning suffixes to the base label', () => {
+    const provider = createCodexProvider(tmpDir)
+    expect(provider.modelDisplayName('gpt-5.3-codex-high')).toBe('GPT-5.3 Codex')
+    expect(provider.modelDisplayName('gpt-5.3-codex-low')).toBe('GPT-5.3 Codex')
+  })
+})
 
 describe('codex provider - session discovery', () => {
   it('discovers sessions in YYYY/MM/DD structure', async () => {
@@ -555,5 +584,29 @@ describe('codex provider - JSONL parsing', () => {
     const calls = await aggregateParentThenFork({ input: 1000, output: 500 })
     // The replay collides with the parent's content-addressed key and is dropped.
     expect(calls).toHaveLength(1)
+  })
+
+  it('attributes MCP calls emitted as event_msg/mcp_tool_call_end (upstream #513)', async () => {
+    const filePath = await writeSession(tmpDir, '2026-04-14', 'rollout-mcp.jsonl', [
+      sessionMeta({ session_id: 'sess-mcp', model: 'gpt-5.5' }),
+      userMessage('look up the issue'),
+      mcpToolCallEnd('github', 'get_issue'),
+      tokenCount({
+        timestamp: '2026-04-14T10:01:00Z',
+        last: { input: 300, output: 100 },
+        total: { total: 400 },
+      }),
+    ])
+
+    const provider = createCodexProvider(tmpDir)
+    const source = { path: filePath, project: 'test', provider: 'codex' }
+    const parser = provider.createSessionParser(source, new Set())
+    const calls: ParsedProviderCall[] = []
+    for await (const call of parser.parse()) {
+      calls.push(call)
+    }
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.tools).toEqual(['mcp__github__get_issue'])
   })
 })
