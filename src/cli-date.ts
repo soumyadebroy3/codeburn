@@ -15,9 +15,9 @@ const END_OF_DAY_MS = 999
 // `--from` / `--to`.
 const ALL_TIME_MONTHS = 6
 
-export type Period = 'today' | 'week' | '30days' | 'month' | 'all'
+export type Period = 'today' | 'week' | '30days' | 'month' | 'all' | 'lifetime'
 
-export const PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
+export const PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all', 'lifetime']
 
 // Short labels suitable for the dashboard tab strip. Long-form labels for
 // header text come from `getDateRange().label`.
@@ -27,9 +27,10 @@ export const PERIOD_LABELS: Record<Period, string> = {
   '30days': '30 Days',
   month: 'This Month',
   all: '6 Months',
+  lifetime: 'Lifetime',
 }
 
-const VALID_PERIODS: ReadonlyArray<Period> = ['today', 'week', '30days', 'month', 'all']
+const VALID_PERIODS: ReadonlyArray<Period> = ['today', 'week', '30days', 'month', 'all', 'lifetime']
 
 export function toPeriod(s: string): Period {
   if ((VALID_PERIODS as readonly string[]).includes(s)) return s as Period
@@ -140,6 +141,15 @@ export function getDateRange(period: string): { range: DateRange; label: string 
       const start = new Date(now.getFullYear(), now.getMonth() - ALL_TIME_MONTHS, 1)
       return { range: { start, end }, label: 'Last 6 months' }
     }
+    case 'lifetime': {
+      // Unbounded all-time window. Unlike 'all' (deliberately capped at 6 months
+      // to keep the menubar's hot path fast), 'lifetime' is the web dashboard's
+      // explicit full-history view — a slower, user-initiated scan is fine there.
+      // Start far enough back to cover any real AI-coding history; the parser
+      // filters by actual session dates, so an early start costs nothing extra.
+      const start = new Date(2015, 0, 1)
+      return { range: { start, end }, label: 'Lifetime' }
+    }
     default: {
       process.stderr.write(
         `codeburn: unknown period "${period}". Valid values: today, week, 30days, month, all.\n`
@@ -151,4 +161,50 @@ export function getDateRange(period: string): { range: DateRange; label: string 
 
 export function formatDateRangeLabel(from: string | undefined, to: string | undefined): string {
   return `${from ?? 'all'} to ${to ?? 'today'}`
+}
+
+/**
+ * A malformed usage query (bad period name or date). Thrown by
+ * periodInfoFromQuery so the sharing HTTPS server can answer 400 instead of
+ * crashing — a remote peer's query string is untrusted input.
+ */
+export class UsageQueryError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UsageQueryError'
+  }
+}
+
+/**
+ * Resolve a `{ period?, from?, to? }` usage query (as received over the wire by
+ * the sharing server, or built locally for `status --scope`) into a concrete
+ * date range + label.
+ *
+ * Unlike getDateRange/toPeriod, this NEVER calls process.exit: the query comes
+ * from a remote peer, so an unknown period or malformed date must degrade to a
+ * 400 (UsageQueryError), never take down the host process. `from`/`to` take
+ * precedence over `period`, matching the CLI's --from/--to override.
+ */
+export function periodInfoFromQuery(
+  query: { period?: string; from?: string; to?: string },
+  defaultPeriod: Period = 'month',
+): { range: DateRange; label: string } {
+  const { period, from, to } = query
+  if (from !== undefined || to !== undefined) {
+    let range: DateRange | null
+    try {
+      range = parseDateRangeFlags(from, to)
+    } catch (err) {
+      throw new UsageQueryError(err instanceof Error ? err.message : String(err))
+    }
+    if (!range) throw new UsageQueryError('empty date range')
+    return { range, label: formatDateRangeLabel(from, to) }
+  }
+  const resolved = period ?? defaultPeriod
+  // Validate against the known set BEFORE calling getDateRange, whose default
+  // branch would process.exit on an unknown period — unacceptable server-side.
+  if (!(PERIODS as readonly string[]).includes(resolved) && resolved !== 'yesterday') {
+    throw new UsageQueryError(`unknown period "${resolved}"`)
+  }
+  return getDateRange(resolved)
 }

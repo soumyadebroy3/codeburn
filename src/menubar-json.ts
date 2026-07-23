@@ -10,6 +10,9 @@ export type PeriodData = {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  /// Total Codex credits consumed in the period (issues #408/#495). Optional so
+  /// non-menubar PeriodData producers don't have to compute it.
+  codexCredits?: number
   categories: Array<{ name: string; cost: number; turns: number; editTurns: number; oneShotTurns: number }>
   models: Array<{ name: string; cost: number; calls: number }>
 }
@@ -79,6 +82,92 @@ export type ValuationBlock = {
   plan: { id: string; displayName: string; monthlyUsd: number } | null
 }
 
+/**
+ * One machine's usage in a multi-device ("Totals by machine") report. `id` is
+ * the cert fingerprint for remotes, or 'local' for this Mac. `error` is set
+ * (and the numeric fields are zero) when a paired device was unreachable or
+ * returned no payload, so the UI can show a degraded row instead of dropping
+ * the device. Cache create/read are split out; totalTokens is their sum with
+ * input + output. (device-sharing #567)
+ */
+export type DeviceSummary = {
+  id: string
+  name: string
+  local: boolean
+  error?: string
+  cost: number
+  calls: number
+  sessions: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreateTokens: number
+  cacheReadTokens: number
+  totalTokens: number
+}
+
+/**
+ * The joined view across this Mac + every paired remote: one summary per
+ * device plus the `combined` roll-up. `deviceCount` counts all devices;
+ * `reachableCount` counts only those that answered (error-free), so the UI can
+ * say "3 of 4 devices" when one is powered off. (device-sharing #567)
+ */
+export type CombinedUsage = {
+  perDevice: DeviceSummary[]
+  combined: {
+    cost: number
+    calls: number
+    sessions: number
+    inputTokens: number
+    outputTokens: number
+    cacheCreateTokens: number
+    cacheReadTokens: number
+    totalTokens: number
+    deviceCount: number
+    reachableCount: number
+  }
+}
+
+/**
+ * Time-bucketed usage series for the web dashboard's granular chart. Each
+ * point is one bucket (e.g. 15/60/1440 min); `models`/`sessions` break the
+ * bucket's cost+tokens down by model and by session. Populated only on the
+ * web-dashboard payload path (buildMenubarPayloadForRange with enrich:true);
+ * the menubar/GNOME/sharing paths omit it. (web dashboard #573)
+ */
+export type GranularSeries = { id: string; label: string }
+export type GranularValue = { seriesId: string; cost: number; tokens: number }
+export type GranularPoint = {
+  timestamp: string
+  cost: number
+  tokens: number
+  models: GranularValue[]
+  sessions: GranularValue[]
+}
+export type GranularHistory = {
+  bucketMinutes: number
+  modelSeries: GranularSeries[]
+  sessionSeries: GranularSeries[]
+  points: GranularPoint[]
+}
+
+/**
+ * The extra `current` breakdowns the web dashboard renders (By tool / Skills /
+ * MCP servers / Subagents / Top projects / Model efficiency panels). Optional
+ * because only the web-dashboard payload path fills them — the menubar's hot
+ * status path and the device-sharing path omit them (smaller payload, and the
+ * sharing egress surface stays aggregate-only). Additive within schema v1:
+ * the Swift/GNOME decoders ignore unknown keys, and the SPA's normalizePayload
+ * defaults every one to []. (web dashboard #533/#534/#554/#586)
+ */
+export type WebEnrichment = {
+  topProjects: Array<{ name: string; cost: number; sessions: number; avgCostPerSession: number }>
+  tools: Array<{ name: string; calls: number }>
+  subagents: Array<{ name: string; calls: number; cost: number }>
+  skills: Array<{ name: string; turns: number; cost: number }>
+  mcpServers: Array<{ name: string; calls: number }>
+  modelEfficiency: Array<{ name: string; costPerEdit: number; oneShotRate: number }>
+}
+
 export type MenubarPayload = {
   schemaVersion: typeof MENUBAR_SCHEMA_VERSION
   generated: string
@@ -99,6 +188,8 @@ export type MenubarPayload = {
     cacheReadTokens: number
     cacheWriteTokens: number
     cacheHitPercent: number
+    /// Codex credits consumed in the period; 0 when there is no Codex usage.
+    codexCredits: number
     topActivities: Array<{
       name: string
       cost: number
@@ -144,6 +235,15 @@ export type MenubarPayload = {
         savingsUSD: number
       }>
     }
+    /// Web-dashboard-only breakdowns (By tool / Skills / MCP / Subagents /
+    /// Top projects / Model efficiency). Present only when the payload is built
+    /// with enrich:true; omitted on the menubar + sharing paths. See WebEnrichment.
+    topProjects?: WebEnrichment['topProjects']
+    tools?: WebEnrichment['tools']
+    subagents?: WebEnrichment['subagents']
+    skills?: WebEnrichment['skills']
+    mcpServers?: WebEnrichment['mcpServers']
+    modelEfficiency?: WebEnrichment['modelEfficiency']
   }
   optimize: {
     findingCount: number
@@ -156,7 +256,18 @@ export type MenubarPayload = {
   }
   history: {
     daily: DailyHistoryEntry[]
+    /// Time-bucketed granular series for the web dashboard's usage chart.
+    /// Present only on the enriched web-dashboard payload path. (#573)
+    timeline?: GranularHistory
   }
+  /**
+   * Optional multi-device roll-up, present only when `status --scope combined`
+   * successfully pulls paired devices. Additive within schema v1 — older
+   * decoders ignore it. Omitted (not null) on the local-only path or when a
+   * pull fails, so the menubar always still gets a valid local payload.
+   * (device-sharing #567)
+   */
+  combined?: CombinedUsage
 }
 
 // Clamp non-finite values (NaN/Infinity from a malformed session file) to 0
@@ -330,6 +441,7 @@ export function buildMenubarPayload(
       cacheReadTokens: finite(current.cacheReadTokens),
       cacheWriteTokens: finite(current.cacheWriteTokens),
       cacheHitPercent: cacheHitPercent(current.inputTokens, current.cacheReadTokens, current.cacheWriteTokens),
+      codexCredits: current.codexCredits ?? 0,
       topActivities: buildTopActivities(current.categories),
       topModels: buildTopModels(current.models),
       providers: buildProviders(providers),

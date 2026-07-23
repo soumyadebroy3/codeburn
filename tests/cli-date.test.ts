@@ -91,7 +91,7 @@ describe('getDateRange', () => {
 
 describe('PERIODS / PERIOD_LABELS', () => {
   it('exposes the expected period set', () => {
-    expect(PERIODS).toEqual(['today', 'week', '30days', 'month', 'all'])
+    expect(PERIODS).toEqual(['today', 'week', '30days', 'month', 'all', 'lifetime'])
   })
 
   it('has a label for every period', () => {

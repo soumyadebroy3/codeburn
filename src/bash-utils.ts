@@ -5,6 +5,17 @@ function stripQuotedStrings(command: string): string {
   return command.replaceAll(/"[^"]*"|'[^']*'/g, match => ' '.repeat(match.length))
 }
 
+// Wrapper commands that delegate to a real program as their argument. When one
+// leads a segment we skip it so the *wrapped* tool is attributed, not the
+// wrapper (e.g. `sudo npm test` -> npm, `npx tsc` -> tsc). (upstream #658)
+const COMMAND_PREFIXES = new Set([
+  'sudo', 'doas',
+  'npx', 'bunx',
+  'time',
+  'nice', 'nohup', 'stdbuf',
+  'rtk',
+])
+
 export function extractBashCommands(rawCommand: string): string[] {
   if (!rawCommand?.trim()) return []
 
@@ -34,7 +45,17 @@ export function extractBashCommands(rawCommand: string): string[] {
 
     const tokens = segment.split(/\s+/)
     let i = 0
-    while (i < tokens.length && /^\w+=/.test(tokens[i]!)) i++
+    while (i < tokens.length) {
+      if (/^\w+=/.test(tokens[i]!)) { i++; continue }
+      const next = tokens[i + 1]
+      if (
+        next !== undefined &&
+        COMMAND_PREFIXES.has(basename(tokens[i]!)) &&
+        !next.startsWith('-') &&
+        !/["']/.test(next)
+      ) { i++; continue }
+      break
+    }
     const base = i < tokens.length ? basename(tokens[i]!) : ''
 
     if (base && base !== 'cd' && base !== 'true' && base !== 'false') {

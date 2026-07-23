@@ -1,6 +1,6 @@
 {
   "name": "@soumyadebroy3/codeburn",
-  "version": "2.4.9",
+  "version": "2.5.0",
   "description": "See where your AI coding tokens go - by task, tool, model, and project",
   "type": "module",
   "main": "./dist/cli.js",
@@ -12,7 +12,8 @@
   ],
   "scripts": {
     "bundle-litellm": "node scripts/bundle-litellm.mjs",
-    "build": "node scripts/bundle-litellm.mjs && tsup && node -e \"require('fs').copyFileSync('src/cli.ts','dist/cli.js'); require('fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "node scripts/bundle-litellm.mjs && tsup && node -e \"require('fs').copyFileSync('src/cli.ts','dist/cli.js'); require('fs').chmodSync('dist/cli.js', 0o755)\" && npm run build:dash",
+    "build:dash": "cd dash && npm install --no-audit --no-fund --silent && npm run build",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
     "prepublishOnly": "npm run build",
@@ -50,15 +51,18 @@
     "access": "public"
   },
   "dependencies": {
+    "bonjour-service": "^1.4.3",
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
     "ink": "^7.0.4",
     "react": "^19.2.6",
+    "selfsigned": "^5.5.0",
     "strip-ansi": "^7.2.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
+    "@types/selfsigned": "^2.0.4",
     "@vitest/coverage-v8": "^4.1.7",
     "tsup": "^8.5.1",
     "tsx": "^4.22.3",

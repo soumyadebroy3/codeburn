@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { calculateCost, getShortModelName } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'
 import { isSqliteAvailable, getSqliteLoadError, openDatabase, blobToText, type SqliteDatabase } from '../sqlite.js'
+import { discoverOpenCodeFileSessions, createOpenCodeFileSessionParser } from './opencode-file-parser.js'
 import type {
   Provider,
   SessionSource,
@@ -500,7 +501,15 @@ export function createOpenCodeProvider(dataDir?: string): Provider {
       return toolNameMap[rawTool] ?? rawTool
     },
 
+    // OpenCode 1.1+ stores sessions as file-based JSON; older builds used a
+    // SQLite DB. Prefer file-based when present, otherwise fall back to the DB
+    // so pre-migration installs keep reporting. The file path does not need
+    // the native SQLite binding, so it is tried before the isSqliteAvailable
+    // guard.
     async discoverSessions(): Promise<SessionSource[]> {
+      const fileSessions = await discoverOpenCodeFileSessions(dir, 'opencode')
+      if (fileSessions.length > 0) return fileSessions
+
       if (!isSqliteAvailable()) return []
 
       const dbPaths = await findDbFiles(dir)
@@ -517,6 +526,11 @@ export function createOpenCodeProvider(dataDir?: string): Provider {
       source: SessionSource,
       seenKeys: Set<string>,
     ): SessionParser {
+      // File-based sources carry a `.json` path; SQLite sources are encoded as
+      // `${dbPath}:${sessionId}` (session IDs are UUIDs with no `.json`).
+      if (source.path.endsWith('.json')) {
+        return createOpenCodeFileSessionParser(source, seenKeys, dir, 'opencode')
+      }
       return createParser(source, seenKeys)
     },
   }

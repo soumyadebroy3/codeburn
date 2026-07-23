@@ -92,5 +92,5 @@ describe('codeburn export custom date range', () => {
     } finally {
       await rm(home, { recursive: true, force: true })
     }
-  })
+  }, 30_000) // real CLI spawn via tsx compile-on-run; exceeds the 5s default under load
 })

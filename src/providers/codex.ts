@@ -15,6 +15,7 @@ const modelDisplayNames: Record<string, string> = {
   'gpt-5.5': 'GPT-5.5',
   'gpt-5.4-mini': 'GPT-5.4 Mini',
   'gpt-5.4': 'GPT-5.4',
+  'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark',
   'gpt-5.3-codex': 'GPT-5.3 Codex',
   'gpt-5.2-low': 'GPT-5.2 Low',
   'gpt-5.2': 'GPT-5.2',
@@ -448,6 +449,16 @@ function processCodexEntry(state: CodexParserState, entry: CodexEntry, source: S
   }
   if (entry.type === 'event_msg' && payloadType === 'patch_apply_end') {
     state.pendingTools.push('Edit')
+    return
+  }
+  // Recent Codex emits MCP calls as `event_msg`/`mcp_tool_call_end` instead of a
+  // `function_call` response_item, so the call was never attributed. Rebuild the
+  // canonical `mcp__<server>__<tool>` name the classifier recognizes. (#513)
+  if (entry.type === 'event_msg' && payloadType === 'mcp_tool_call_end') {
+    const inv = (entry.payload as Record<string, unknown>)['invocation'] as Record<string, unknown> | undefined
+    const server = typeof inv?.['server'] === 'string' ? inv['server'] as string : ''
+    const tool = typeof inv?.['tool'] === 'string' ? inv['tool'] as string : ''
+    if (server && tool) state.pendingTools.push(`mcp__${server}__${tool}`)
     return
   }
   if (entry.type === 'response_item' && payloadType === 'message' && entry.payload?.role === 'user') {

@@ -351,6 +351,7 @@ describe('pi provider - display names', () => {
   it('maps known models to readable names', () => {
     expect(provider.modelDisplayName('gpt-5.4')).toBe('GPT-5.4')
     expect(provider.modelDisplayName('gpt-5.4-mini')).toBe('GPT-5.4 Mini')
+    expect(provider.modelDisplayName('gpt-5.5')).toBe('GPT-5.5')
     expect(provider.modelDisplayName('gpt-5')).toBe('GPT-5')
   })
 

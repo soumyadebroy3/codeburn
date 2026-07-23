@@ -47,6 +47,8 @@ describe('Menubar snapshot contract (v1)', () => {
       'cacheReadTokens',
       'cacheWriteTokens',
       'calls',
+      // Codex credits consumed in the period (#510); 0 when no Codex usage.
+      'codexCredits',
       'cost',
       'inputTokens',
       'label',

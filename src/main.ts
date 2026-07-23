@@ -3,12 +3,15 @@ import { safeRunGit } from './git-safe.js'
 import { installMenubarApp } from './menubar-installer.js'
 import { installTrayApp } from './tray-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
-import { getShortModelName, loadPricing, setModelAliases } from './models.js'
+import { getShortModelName, loadPricing, setModelAliases, setPriceOverrides } from './models.js'
+import { renderOverview } from './overview.js'
+import { codexCredits, codexCreditRate } from './codex-credits.js'
 import { parseAllSessions, filterProjectsByName, clearSessionCache } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { type PeriodData, type ProviderCost } from './menubar-json.js'
 import { buildMenubarPayload, computeValuation } from './menubar-json.js'
+import { buildPeriodData, computeProviderCosts, buildMenubarPayloadForRange } from './usage-payload.js'
 import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateString } from './daily-cache.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
@@ -16,9 +19,22 @@ import { aggregateModelEfficiency } from './model-efficiency.js'
 import { renderDashboard } from './dashboard.js'
 import { formatDateRangeLabel, parseDateRangeFlags, getDateRange, toPeriod, type Period } from './cli-date.js'
 import { runOptimize, scanAndDetect } from './optimize.js'
+import { runContextCommand } from './context-tree.js'
+import { registerActCommands } from './act/cli.js'
 import { renderCompare } from './compare.js'
-import { getAllProviders } from './providers/index.js'
-import { clearPlan, readConfig, readPlan, readAllPlans, saveConfig, savePlan, getConfigFilePath, type PlanId } from './config.js'
+import { runShareServer } from './sharing/share-run.js'
+import { runWebDashboard } from './web-dashboard.js'
+import { addRemote, linkRemote, pullDevices, renderDevices, summarizeDeviceUsage } from './sharing/host.js'
+import { browse } from './sharing/discovery.js'
+import { ShareController } from './sharing/share-controller.js'
+import { loadOrCreateIdentity } from './sharing/identity.js'
+import { pairingCode } from './sharing/pairing.js'
+import { promptChoice } from './sharing/prompt.js'
+import { getSharingDir, loadRemotes, saveRemotes } from './sharing/store.js'
+import type { UsageQuery } from './sharing/share-server.js'
+import { hostname } from 'node:os'
+import { getAllProviders, safeDiscoverSessions, allProviderNames } from './providers/index.js'
+import { clearPlan, readConfig, readPlan, readAllPlans, saveConfig, savePlan, getConfigFilePath, type CodeburnConfig, type PlanId } from './config.js'
 import { detectPlans } from './plan-detect.js'
 import { clampResetDay, getPlanUsageOrNull, type PlanUsage } from './plan-usage.js'
 import { getPresetPlan, isPlanId, isPlanProvider, planDisplayName } from './plans.js'
@@ -77,6 +93,14 @@ async function hydrateCache() {
   }
 }
 
+// A downstream reader that closes the pipe early (`| head`, quitting `less`, or
+// a missing command) makes stdout writes fail with EPIPE. Exit cleanly rather
+// than crashing with an unhandled error event.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(0)
+  throw err
+})
+
 function collect(val: string, acc: string[]): string[] {
   acc.push(val)
   return acc
@@ -125,6 +149,24 @@ function assertFormat(value: string, allowed: readonly string[], command: string
   }
 }
 
+function assertScope(value: string, allowed: readonly string[], command: string): void {
+  if (!allowed.includes(value)) {
+    process.stderr.write(
+      `codeburn ${command}: unknown scope "${value}". Valid values: ${allowed.join(', ')}.\n`
+    )
+    process.exit(1)
+  }
+}
+
+function assertProvider(value: string, command: string): void {
+  const names = allProviderNames()
+  if (value === 'all' || names.includes(value)) return
+  process.stderr.write(
+    `codeburn ${command}: unknown provider "${value}". Valid values: all, ${names.join(', ')}.\n`
+  )
+  process.exit(1)
+}
+
 async function runJsonReport(period: Period, provider: string, project: string[], exclude: string[]): Promise<void> {
   await loadPricing()
   const { range, label } = getDateRange(period)
@@ -157,6 +199,7 @@ program.hook('preAction', async (thisCommand) => {
   }
   const config = await readConfig()
   setModelAliases(config.modelAliases ?? {})
+  setPriceOverrides(config.priceOverrides ?? {})
   if (thisCommand.opts<{ verbose?: boolean }>().verbose) {
     process.env['CODEBURN_VERBOSE'] = '1'
   }
@@ -240,6 +283,16 @@ function buildModelList(modelMap: Record<string, ModelMapEntry>, modelEfficiency
         name,
         ...rest,
         cost: convertCost(cost),
+        // Codex credits consumed by this model (null for non-Codex models —
+        // codexCreditRate returns null, which stands in for the missing
+        // per-model `provider` field). (#510)
+        credits: codexCreditRate(name) != null
+          ? codexCredits(name, {
+              inputTokens: rest.inputTokens,
+              cachedReadTokens: rest.cacheReadTokens,
+              outputTokens: rest.outputTokens,
+            })
+          : null,
         editTurns: efficiency?.editTurns ?? 0,
         oneShotTurns: efficiency?.oneShotTurns ?? 0,
         oneShotRate: efficiency?.oneShotRate ?? null,
@@ -262,20 +315,6 @@ function buildActivityList(catMap: Record<string, CategoryMapEntry>) {
       oneShotTurns: d.oneShotTurns,
       oneShotRate: d.editTurns > 0 ? Math.round((d.oneShotTurns / d.editTurns) * 1000) / 10 : null,
     }))
-}
-
-function computeProviderCosts(projects: ProjectSummary[]): ProviderCost[] {
-  const providerCosts = new Map<string, number>()
-  for (const proj of projects) {
-    for (const session of proj.sessions) {
-      for (const turn of session.turns) {
-        for (const call of turn.assistantCalls ?? []) {
-          providerCosts.set(call.provider, (providerCosts.get(call.provider) ?? 0) + call.costUSD)
-        }
-      }
-    }
-  }
-  return Array.from(providerCosts.entries()).map(([name, cost]) => ({ name, cost }))
 }
 
 function buildDailyHistory(days: ReturnType<typeof aggregateProjectsIntoDays>) {
@@ -468,6 +507,7 @@ program
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'report')
+    assertProvider(opts.provider, 'report')
     let customRange: DateRange | null = null
     try {
       customRange = parseDateRangeFlags(opts.from, opts.to)
@@ -498,53 +538,11 @@ program
     await renderDashboard(period, opts.provider, opts.refresh, projectScope.filter, opts.exclude, customRange, customRangeLabel)
   })
 
-function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
-  const sessions = projects.flatMap(p => p.sessions)
-  // Null-prototype maps: model names (and categories) are untrusted transcript
-  // strings, so a "__proto__"/"constructor" key must not bind to Object.prototype
-  // and pollute it via `if (!map[k]) …; map[k].x += …`. See daily-cache.safeRecord.
-  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = Object.create(null)
-  const modelTotals: Record<string, { calls: number; cost: number }> = Object.create(null)
-  let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0
-
-  for (const sess of sessions) {
-    inputTokens += sess.totalInputTokens
-    outputTokens += sess.totalOutputTokens
-    cacheReadTokens += sess.totalCacheReadTokens
-    cacheWriteTokens += sess.totalCacheWriteTokens
-    for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
-      if (!catTotals[cat]) catTotals[cat] = { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 }
-      catTotals[cat].turns += d.turns
-      catTotals[cat].cost += d.costUSD
-      catTotals[cat].editTurns += d.editTurns
-      catTotals[cat].oneShotTurns += d.oneShotTurns
-    }
-    for (const [model, d] of Object.entries(sess.modelBreakdown)) {
-      if (!modelTotals[model]) modelTotals[model] = { calls: 0, cost: 0 }
-      modelTotals[model].calls += d.calls
-      modelTotals[model].cost += d.costUSD
-    }
-  }
-
-  return {
-    label,
-    cost: projects.reduce((s, p) => s + p.totalCostUSD, 0),
-    calls: projects.reduce((s, p) => s + p.totalApiCalls, 0),
-    sessions: projects.reduce((s, p) => s + p.sessions.length, 0),
-    inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
-    categories: Object.entries(catTotals)
-      .sort(([, a], [, b]) => b.cost - a.cost)
-      .map(([cat, d]) => ({ name: CATEGORY_LABELS[cat as TaskCategory] ?? cat, ...d })),
-    models: Object.entries(modelTotals)
-      .sort(([, a], [, b]) => b.cost - a.cost)
-      .map(([name, d]) => ({ name, ...d })),
-  }
-}
-
 program
   .command('status')
   .description('Compact status output (today + month)')
   .option('--format <format>', 'Output format: terminal, menubar-json, json', 'terminal')
+  .option('--scope <scope>', 'Usage scope for menubar-json: local, combined (paired devices)', 'local')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--project <name>', 'Show only projects matching name (repeatable). Default auto-scopes to the cwd git repo when run inside one.', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
@@ -553,6 +551,16 @@ program
   .option('--no-optimize', 'Skip optimize findings (menubar-json only, faster)')
   .action(async (opts) => {
     assertFormat(opts.format, ['terminal', 'menubar-json', 'json'], 'status')
+    assertScope(opts.scope, ['local', 'combined'], 'status')
+    assertProvider(opts.provider, 'status')
+    // --scope combined pulls each paired device's UNFILTERED usage, so a
+    // provider/project/exclude filter can't be honored across the fleet —
+    // reject the contradiction loudly rather than silently returning a local
+    // filter on a combined roll-up.
+    if (opts.scope === 'combined' && (opts.provider !== 'all' || opts.project.length > 0 || opts.exclude.length > 0)) {
+      process.stderr.write('error: --scope combined cannot be combined with --provider, --project, or --exclude (paired devices report unfiltered usage)\n')
+      process.exit(1)
+    }
     await loadPricing()
     const pf = opts.provider
     const projectScope = resolveProjectScope(opts)
@@ -656,7 +664,7 @@ program
         const candidatesToProbe = allProviders.filter(p => !providers.some(pc => pc.name === p.displayName))
         const probed = await Promise.all(candidatesToProbe.map(async p => ({
           provider: p,
-          hasSessions: (await p.discoverSessions()).length > 0,
+          hasSessions: (await safeDiscoverSessions(p)).length > 0,
         })))
         for (const { provider, hasSessions } of probed) {
           if (hasSessions) providers.push({ name: provider.displayName, cost: 0 })
@@ -781,7 +789,24 @@ program
         byModel: routingWasteByModel.slice(0, 5),
       }
 
-      console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory, valuation, retryTax, routingWaste)))
+      const payload = buildMenubarPayload(currentData, providers, optimize, dailyHistory, valuation, retryTax, routingWaste)
+      if (opts.scope === 'combined') {
+        // Combined multi-device usage is best-effort enrichment on the menubar's
+        // hot path. Never let pulling peers (or a corrupt remotes store) take
+        // down the base local payload: on any failure, emit local data with
+        // `combined` omitted so the menubar always gets a valid response.
+        try {
+          const localGetUsage = async (): Promise<typeof payload> => payload
+          const results = await pullDevices(localGetUsage, { period: opts.period }, hostname(), {})
+          payload.combined = summarizeDeviceUsage(results, {
+            start: toDateString(periodInfo.range.start),
+            end: toDateString(periodInfo.range.end),
+          })
+        } catch {
+          // best-effort only: the local payload is still emitted below
+        }
+      }
+      console.log(JSON.stringify(payload))
       return
     }
 
@@ -835,6 +860,7 @@ program
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'today')
+    assertProvider(opts.provider, 'today')
     const projectScope = resolveProjectScope(opts)
     if (opts.format === 'json') {
       await runJsonReport('today', opts.provider, projectScope.filter, opts.exclude)
@@ -854,6 +880,7 @@ program
   .option('--refresh <seconds>', 'Auto-refresh interval in seconds (0 to disable)', parseInteger, 30)
   .action(async (opts) => {
     assertFormat(opts.format, ['tui', 'json'], 'month')
+    assertProvider(opts.provider, 'month')
     const projectScope = resolveProjectScope(opts)
     if (opts.format === 'json') {
       await runJsonReport('month', opts.provider, projectScope.filter, opts.exclude)
@@ -876,6 +903,7 @@ program
   .option('--redact-paths', 'Replace absolute project paths with salted hashes (safe to share)')
   .action(async (opts) => {
     assertFormat(opts.format, ['csv', 'json', 'html'], 'export')
+    assertProvider(opts.provider, 'export')
     await loadPricing()
     const pf = opts.provider
     // Resolve the effective project scope: explicit --project wins, then
@@ -941,6 +969,179 @@ program
 
     const exportedLabel = customRange ? formatDateRangeLabel(opts.from, opts.to) : 'Today + 7 Days + 30 Days'
     console.log(`\n  Exported (${exportedLabel}) to: ${savedPath}\n`)
+  })
+
+program
+  .command('share [action]')
+  .description("Securely share this device's usage with your other devices (opt-in LAN sharing). Actions: status. Supports --format json for status.")
+  .option('--port <number>', 'Port to listen on', parseInteger, 7777)
+  .option('--pair', 'Open a pairing window and print a PIN to add a new device')
+  .option('--always', 'Keep sharing until stopped (default stops after 10 min idle)')
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (action: string | undefined, opts) => {
+    assertFormat(opts.format, ['text', 'json'], 'share')
+    if (action === 'status') {
+      const share = new ShareController(async () => ({}), opts.port)
+      const status = await share.status()
+      if (opts.format === 'json') {
+        console.log(JSON.stringify(status))
+        return
+      }
+      console.log(`\n  Sharing: ${status.sharing ? 'on' : 'off'}\n  Name: ${status.name}\n  Port: ${status.port}\n  Paired peers: ${status.peers}\n`)
+      return
+    }
+    if (action !== undefined) {
+      process.stderr.write('codeburn share: unknown action. Valid values: status.\n')
+      process.exit(1)
+    }
+    if (opts.format === 'json') {
+      process.stderr.write('codeburn share: --format json is only supported for `share status`.\n')
+      process.exit(1)
+    }
+    await runShareServer({ port: opts.port, pair: !!opts.pair, always: !!opts.always })
+  })
+
+program
+  .command('devices [action] [target]')
+  .description('Combined usage across your devices. Actions: scan | add (find nearby & pair) | add <host> --pin <pin> (manual) | rm <name>. Supports --format json for read-only output and scan.')
+  .option('--pin <pin>', 'Pairing PIN shown on the device you are adding')
+  .option('-p, --period <period>', 'Period: today, week, 30days, month, all', 'month')
+  .option('--port <number>', 'Default port when adding a device', parseInteger, 7777)
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (action: string | undefined, target: string | undefined, opts) => {
+    assertFormat(opts.format, ['text', 'json'], 'devices')
+    await loadPricing()
+    if (action === 'scan') {
+      const dir = getSharingDir()
+      const id = await loadOrCreateIdentity(dir)
+      const pairedFps = new Set((await loadRemotes(dir)).map((r) => r.fingerprint))
+      const found = (await browse(2500))
+        .filter((d) => d.fingerprint !== id.fingerprint)
+        .map((d) => ({
+          name: d.name,
+          host: d.host,
+          port: d.port,
+          fingerprint: d.fingerprint,
+          code: pairingCode(id.fingerprint, d.fingerprint),
+          paired: pairedFps.has(d.fingerprint),
+        }))
+      if (opts.format === 'json') {
+        console.log(JSON.stringify({ found }))
+        return
+      }
+      if (found.length === 0) {
+        console.log('\n  No devices found. On the other Mac run `codeburn share`, and make sure both are on the same Wi-Fi.\n')
+        return
+      }
+      process.stdout.write('\n  Found devices:\n')
+      for (const d of found) {
+        process.stdout.write(`    ${d.name} (${d.host}:${d.port}) ${d.paired ? '[paired]' : `[code ${d.code}]`}\n`)
+      }
+      process.stdout.write('\n')
+      return
+    }
+    if (opts.format === 'json' && action !== undefined) {
+      process.stderr.write('codeburn devices: --format json is only supported for read-only devices output and scan.\n')
+      process.exit(1)
+    }
+    if (action === 'add') {
+      if (target && opts.pin) {
+        // Manual pairing trusts the address you typed: it sends the PIN to
+        // whoever answers at <target> without first confirming it's the right
+        // device (unlike discover-and-approve, which matches a code on both
+        // ends). Warn so a mistyped/hijacked address can't silently capture the
+        // PIN. (security review — first-pairing TOCTOU)
+        process.stderr.write(
+          `\n  ⚠ Manual pairing sends the PIN to ${target} without verifying it's the right device.\n` +
+          `    Double-check that address is the one shown on your other Mac.\n` +
+          `    Tip: 'codeburn devices add' (no host) discovers and confirms a matching code instead.\n`
+        )
+        const device = await addRemote(target, opts.pin, { defaultPort: opts.port })
+        console.log(`\n  Paired with "${device.name}" (${device.host}:${device.port}).\n`)
+        return
+      }
+      process.stdout.write('\n  Looking for devices on your network...\n')
+      const found = await browse(3000)
+      if (found.length === 0) {
+        console.error('  No devices found. On the other Mac run `codeburn share`, and make sure both are on the same Wi-Fi.\n')
+        process.exit(1)
+      }
+      let chosen = found[0]!
+      if (found.length > 1) {
+        found.forEach((d, i) => process.stdout.write(`    ${i + 1}) ${d.name} (${d.host})\n`))
+        const n = await promptChoice('  Connect to which? [number]', found.length)
+        if (n < 1) {
+          console.error('  Cancelled.\n')
+          process.exit(1)
+        }
+        chosen = found[n - 1]!
+      }
+      const device = await linkRemote(chosen, {
+        onCode: (code) =>
+          process.stdout.write(`\n  Connecting to "${chosen.name}". Confirm this code on that device:  ${code}\n  Waiting for approval...\n`),
+      })
+      console.log(`\n  Paired with "${device.name}".\n`)
+      return
+    }
+    if (action === 'rm' || action === 'remove') {
+      const remotes = await loadRemotes()
+      const next = remotes.filter((r) => r.name !== target && `${r.host}:${r.port}` !== target)
+      await saveRemotes(next)
+      console.log(`\n  Removed ${remotes.length - next.length} device(s).\n`)
+      return
+    }
+    const localGetUsage = async (q: UsageQuery) => {
+      const customRange = parseDateRangeFlags(q.from, q.to)
+      const periodInfo = customRange
+        ? { range: customRange, label: formatDateRangeLabel(q.from, q.to) }
+        : getDateRange(toPeriod(q.period ?? opts.period))
+      return buildMenubarPayloadForRange(periodInfo, { provider: 'all', optimize: false })
+    }
+    const results = await pullDevices(localGetUsage, { period: opts.period }, hostname(), {})
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(summarizeDeviceUsage(results)))
+      return
+    }
+    process.stdout.write('\n' + renderDevices(results))
+  })
+
+program
+  .command('identity')
+  .description('Show this device identity (name + cert fingerprint) used for sharing')
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (opts: { format: string }) => {
+    assertFormat(opts.format, ['text', 'json'], 'identity')
+    const id = await loadOrCreateIdentity(getSharingDir())
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ name: id.name, fingerprint: id.fingerprint }))
+      return
+    }
+    console.log(`\n  Name: ${id.name}\n  Fingerprint: ${id.fingerprint}\n`)
+  })
+
+program
+  .command('web')
+  .description('Open the local web dashboard in your browser (loopback-only)')
+  .option('-p, --period <period>', 'Initial period: today, week, 30days, month, all', 'today')
+  .option('--from <date>', 'Start date (YYYY-MM-DD)')
+  .option('--to <date>', 'End date (YYYY-MM-DD)')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, copilot)', 'all')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--port <number>', 'Port to listen on (falls back to a free port if taken)', parseInteger, 4747)
+  .option('--no-open', 'Do not open the browser automatically')
+  .action(async (opts) => {
+    assertProvider(opts.provider, 'web')
+    await runWebDashboard({
+      period: opts.period,
+      provider: opts.provider,
+      from: opts.from,
+      to: opts.to,
+      project: opts.project,
+      exclude: opts.exclude,
+      port: opts.port,
+      open: opts.open,
+    })
   })
 
 program
@@ -1210,11 +1411,42 @@ program
   .description('Find token waste and get exact fixes')
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
+  .option('--apply', 'Interactively apply config-class fixes (backed up, journaled, undoable)')
+  .option('--yes', 'With --apply: apply every appliable fix without prompting')
+  .option('--dry-run', 'With --apply: print the plan and exit without changing anything')
+  .option('--only <ids>', 'With --apply: restrict to a comma-separated list of finding ids')
   .action(async (opts) => {
+    assertProvider(opts.provider, 'optimize')
     await loadPricing()
     const { range, label } = getDateRange(opts.period)
     const projects = await parseAllSessions(range, opts.provider)
+    if (opts.apply) {
+      const { runOptimizeApply } = await import('./act/optimize-apply.js')
+      await runOptimizeApply(projects, range, { yes: opts.yes, dryRun: opts.dryRun, only: opts.only })
+      return
+    }
     await runOptimize(projects, label, range)
+  })
+
+program
+  .command('context [session]')
+  .description('Context token breakdown per session: what fills the window, by role, block type, and tool (experimental). No session argument opens an interactive browser.')
+  .option('--list', 'List recent sessions to pick from')
+  .option('--full', 'Cover the whole session history instead of the live (post-compaction) window')
+  .option('--json', 'JSON output')
+  .option('--provider <provider>', 'Session source: claude or codex', 'claude')
+  .action(async (session: string | undefined, opts: { list?: boolean; full?: boolean; json?: boolean; provider?: string }) => {
+    if (opts.provider !== 'claude' && opts.provider !== 'codex') {
+      console.error('context: --provider must be claude or codex')
+      process.exitCode = 1
+      return
+    }
+    if (!session && !opts.list && !opts.json && process.stdout.isTTY && process.stdin.isTTY) {
+      const { runContextTui } = await import('./context-tui.js')
+      await runContextTui({ initialScope: opts.full ? 'full' : 'effective' })
+      return
+    }
+    await runContextCommand(session, opts)
   })
 
 program
@@ -1223,9 +1455,180 @@ program
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', 'all')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .action(async (opts) => {
+    assertProvider(opts.provider, 'compare')
     await loadPricing()
     const { range } = getDateRange(opts.period)
     await renderCompare(range, opts.provider)
+  })
+
+program
+  .command('overview')
+  .description('Plain-text usage overview, copy-pasteable (defaults to this month)')
+  .option('-p, --period <period>', 'Period: today, week, 30days, month, all', 'month')
+  .option('--from <date>', 'Start date (YYYY-MM-DD). Overrides --period when set')
+  .option('--to <date>', 'End date (YYYY-MM-DD). Overrides --period when set')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, copilot)', 'all')
+  .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
+  .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
+  .option('--no-color', 'Disable ANSI colors')
+  .action(async (opts) => {
+    assertProvider(opts.provider, 'overview')
+    await loadPricing()
+    let customRange: DateRange | null = null
+    try {
+      customRange = parseDateRangeFlags(opts.from, opts.to)
+    } catch (err) {
+      console.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+    const { range, label } = customRange
+      ? { range: customRange, label: formatDateRangeLabel(opts.from, opts.to) }
+      : getDateRange(toPeriod(opts.period))
+    const projects = filterProjectsByName(await parseAllSessions(range, opts.provider), opts.project, opts.exclude)
+    process.stdout.write(renderOverview(projects, { label, color: opts.color }))
+  })
+
+program
+  .command('audit')
+  .description("Token audit: raw provider token fields vs codeburn's displayed totals and cost derivation")
+  .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
+  .option('--from <date>', 'Custom range start (YYYY-MM-DD)')
+  .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
+  .option('--format <format>', 'Output format: table, json', 'table')
+  .action(async (opts) => {
+    assertProvider(opts.provider, 'audit')
+    const { aggregateAudit, renderAuditTable, renderAuditJson } = await import('./audit-report.js')
+    await loadPricing()
+
+    let range
+    if (opts.from || opts.to) {
+      const customRange = parseDateRangeFlags(opts.from, opts.to)
+      if (!customRange) {
+        process.stderr.write('codeburn: --from and --to must be valid YYYY-MM-DD dates\n')
+        process.exit(1)
+      }
+      range = customRange
+    } else {
+      range = getDateRange(opts.period).range
+    }
+
+    const projects = await parseAllSessions(range, opts.provider)
+    const rows = await aggregateAudit(projects)
+
+    const fmt = (opts.format ?? 'table').toLowerCase()
+    if (fmt === 'json') {
+      process.stdout.write(renderAuditJson(rows) + '\n')
+    } else {
+      if (rows.length === 0) {
+        process.stdout.write('No model usage found for the selected period.\n')
+        return
+      }
+      process.stdout.write(renderAuditTable(rows) + '\n')
+    }
+  })
+
+type PriceOverrideConfig = NonNullable<CodeburnConfig['priceOverrides']>[string]
+
+type PriceOverrideOptions = {
+  input?: number
+  output?: number
+  cacheRead?: number
+  cacheCreation?: number
+  remove?: string
+  list?: boolean
+}
+
+function invalidUsdPerMillionRate(option: string, value: number | undefined): string | null {
+  if (value === undefined) return null
+  if (Number.isFinite(value) && value >= 0) return null
+  return `Invalid ${option}: expected a finite number >= 0 (USD per 1,000,000 tokens).`
+}
+
+function formatPriceOverrideParts(rates: PriceOverrideConfig): string {
+  const parts = [`input ${rates.input}`, `output ${rates.output}`]
+  if (typeof rates.cacheRead === 'number') parts.push(`cache read ${rates.cacheRead}`)
+  if (typeof rates.cacheCreation === 'number') parts.push(`cache creation ${rates.cacheCreation}`)
+  return parts.join(', ')
+}
+
+program
+  .command('price-override [model]')
+  .description('Override or add local model pricing. Rates are USD per 1,000,000 tokens (e.g. --input 0.27).')
+  .option('--input <usd-per-1M>', 'Input token price in USD per 1,000,000 tokens', parseNumber)
+  .option('--output <usd-per-1M>', 'Output token price in USD per 1,000,000 tokens', parseNumber)
+  .option('--cache-read <usd-per-1M>', 'Cache-read token price in USD per 1,000,000 tokens', parseNumber)
+  .option('--cache-creation <usd-per-1M>', 'Cache-creation token price in USD per 1,000,000 tokens', parseNumber)
+  .option('--remove <model>', 'Remove a price override')
+  .option('--list', 'List configured price overrides')
+  .action(async (model?: string, opts?: PriceOverrideOptions) => {
+    const config = await readConfig()
+    const overrides = new Map<string, PriceOverrideConfig>(Object.entries(config.priceOverrides ?? {}))
+
+    if (opts?.list || (!model && !opts?.remove)) {
+      const entries = [...overrides.entries()]
+      if (entries.length === 0) {
+        console.log('\n  No price overrides configured.')
+        console.log('  Rates use USD per 1,000,000 tokens.')
+        console.log(`  Config: ${getConfigFilePath()}`)
+        console.log('  Add one with: codeburn price-override <model> --input <usd-per-1M> --output <usd-per-1M>\n')
+      } else {
+        console.log('\n  Price overrides (USD per 1,000,000 tokens):')
+        for (const [name, rates] of entries) {
+          console.log(`    ${name}: ${formatPriceOverrideParts(rates)}`)
+        }
+        console.log(`  Config: ${getConfigFilePath()}\n`)
+      }
+      return
+    }
+
+    if (opts?.remove) {
+      if (!overrides.has(opts.remove)) {
+        console.error(`\n  Price override not found: ${opts.remove}\n`)
+        process.exitCode = 1
+        return
+      }
+      overrides.delete(opts.remove)
+      config.priceOverrides = overrides.size > 0 ? Object.fromEntries(overrides) : undefined
+      await saveConfig(config)
+      console.log(`\n  Removed price override: ${opts.remove}\n`)
+      return
+    }
+
+    const input = opts?.input
+    const output = opts?.output
+    const cacheRead = opts?.cacheRead
+    const cacheCreation = opts?.cacheCreation
+    if (!model || input === undefined || output === undefined) {
+      console.error('\n  Usage: codeburn price-override <model> --input <usd-per-1M> --output <usd-per-1M> [--cache-read <usd-per-1M>] [--cache-creation <usd-per-1M>]\n')
+      process.exitCode = 1
+      return
+    }
+
+    const invalidRate = [
+      invalidUsdPerMillionRate('--input', input),
+      invalidUsdPerMillionRate('--output', output),
+      invalidUsdPerMillionRate('--cache-read', cacheRead),
+      invalidUsdPerMillionRate('--cache-creation', cacheCreation),
+    ].find((message): message is string => message !== null)
+    if (invalidRate) {
+      console.error(`\n  ${invalidRate}\n`)
+      process.exitCode = 1
+      return
+    }
+
+    const override: PriceOverrideConfig = {
+      input,
+      output,
+      ...(cacheRead !== undefined ? { cacheRead } : {}),
+      ...(cacheCreation !== undefined ? { cacheCreation } : {}),
+    }
+    overrides.set(model, override)
+    config.priceOverrides = Object.fromEntries(overrides)
+    await saveConfig(config)
+    console.log(`\n  Price override saved: ${model}: ${formatPriceOverrideParts(override)}`)
+    console.log('  Unit: USD per 1,000,000 tokens')
+    console.log(`  Config: ${getConfigFilePath()}\n`)
   })
 
 program
@@ -1269,5 +1672,8 @@ program
     console.log(formatImportReport(report))
     if (report.errors.length > 0) process.exit(1)
   })
+
+// Review/undo the acting layer's applied changes: `act list | undo | report`. (#610)
+registerActCommands(program)
 
 program.parse()

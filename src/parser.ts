@@ -226,7 +226,7 @@ function extractClaudeCacheCreation(usage: AssistantMessageContent['usage']): { 
   }
 }
 
-function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
+export function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
   if (entry.type !== 'assistant') return null
   const msg = entry.message as AssistantMessageContent | undefined
   if (!msg?.usage || !msg?.model) return null
@@ -301,7 +301,7 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
   }
 }
 
-function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
+export function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
   const firstIdxById = new Map<string, number>()
   const lastIdxById = new Map<string, number>()
   for (let i = 0; i < entries.length; i++) {

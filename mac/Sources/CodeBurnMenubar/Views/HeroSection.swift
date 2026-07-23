@@ -11,14 +11,30 @@ struct HeroSection: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heroPressed: Bool = false
 
-    /// Cycle the hero metric on tap: cost → tokens (↑↓) → cost.
-    /// Two-mode UX replaces the previous Settings picker so users discover
-    /// the alternate view without digging through preferences. Persists via
-    /// UserDefaults.
+    /// Whether the current period has Codex credit usage. Credits only join
+    /// the hero's tap-cycle when there's something to show — a non-Codex user
+    /// never sees a "0 cr" state.
+    private var creditsAvailable: Bool {
+        store.currentPayload.current.codexCredits > 0
+    }
+
+    /// The effective metric to render. Normalizes a stale persisted `.credits`
+    /// down to `.cost` when the current period has no credits, so switching to
+    /// a non-Codex period never leaves the hero stuck on an empty credits view.
+    private var metric: DisplayMetric {
+        if store.displayMetric == .credits && !creditsAvailable { return .cost }
+        return store.displayMetric
+    }
+
+    /// Cycle the hero metric on tap: cost → tokens (↑↓) → credits → cost.
+    /// Credits is skipped when the period has none. Replaces the old Settings
+    /// picker so users discover the alternate views without digging through
+    /// preferences. Persists via UserDefaults.
     private func cycleMetric() {
-        switch store.displayMetric {
-        case .cost:   store.displayMetric = .tokens
-        case .tokens: store.displayMetric = .cost
+        switch metric {
+        case .cost:    store.displayMetric = .tokens
+        case .tokens:  store.displayMetric = creditsAvailable ? .credits : .cost
+        case .credits: store.displayMetric = .cost
         }
     }
 
@@ -64,7 +80,7 @@ struct HeroSection: View {
                             .onEnded { _ in cycleMetric(); heroPressed = false }
                     )
                     .help(metricTooltip)
-                    .accessibilityLabel(store.displayMetric == .tokens ? "Total tokens" : "Total cost")
+                    .accessibilityLabel(accessibilityMetricLabel)
                     .accessibilityValue(heroText)
                     .accessibilityHint(metricTooltip)
                     .accessibilityAddTraits(.isButton)
@@ -73,7 +89,7 @@ struct HeroSection: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    if store.displayMetric == .tokens {
+                    if metric == .tokens {
                         // ↑ in — everything fed to the model (fresh input + cache
                         // read + cache write). ↓ out — tokens the model generated.
                         // Arrows follow the upload=in / download=out convention.
@@ -112,7 +128,7 @@ struct HeroSection: View {
                 SparklineView(points: sparkPoints)
                     .frame(height: 22)
                     .padding(.top, 2)
-                    .accessibilityLabel("14-day \(store.displayMetric == .tokens ? "token" : "spend") trend")
+                    .accessibilityLabel("14-day \(metric == .tokens ? "token" : "spend") trend")
             }
 
             // Daily budget warning banner — uses todayPayload (always-warm
@@ -140,18 +156,30 @@ struct HeroSection: View {
         .padding(.bottom, 12)
     }
 
-    /// Last 14 days of the hero metric, feeding the inline sparkline.
+    /// Last 14 days of the hero metric, feeding the inline sparkline. Credits
+    /// have no per-day series in the daily history, so that mode reuses the
+    /// spend sparkline as a secondary at-a-glance trend.
     private var sparkPoints: [Double] {
         let days = store.currentPayload.history.daily.suffix(14)
-        return store.displayMetric == .tokens ? days.map(\.effectiveTokens) : days.map(\.cost)
+        return metric == .tokens ? days.map(\.effectiveTokens) : days.map(\.cost)
     }
 
     /// One-line tooltip surfaced on hover. Tells the user the next view
     /// they'd see if they tapped — the affordance is otherwise invisible.
     private var metricTooltip: String {
-        switch store.displayMetric {
-        case .cost:   return "Tap to show tokens"
-        case .tokens: return "Tap to show cost"
+        switch metric {
+        case .cost:    return "Tap to show tokens"
+        case .tokens:  return creditsAvailable ? "Tap to show Codex credits" : "Tap to show cost"
+        case .credits: return "Tap to show cost"
+        }
+    }
+
+    /// Accessibility label for the hero figure, tracking the active metric.
+    private var accessibilityMetricLabel: String {
+        switch metric {
+        case .cost:    return "Total cost"
+        case .tokens:  return "Total tokens"
+        case .credits: return "Codex credits"
         }
     }
 
@@ -173,17 +201,27 @@ struct HeroSection: View {
         return c.inputTokens + c.cacheReadTokens + c.cacheWriteTokens
     }
 
-    /// Hero figure text. Falls back to currency for `.cost`; renders the total
-    /// token throughput for `.tokens` (the side caption splits it into in↑ / out↓).
+    /// Hero figure text. Currency for `.cost`; total token throughput for
+    /// `.tokens` (the side caption splits it into in↑ / out↓); Codex credit
+    /// total for `.credits`.
     private var heroText: String {
-        if store.displayMetric == .tokens {
+        switch metric {
+        case .tokens:
             let total = Double(totalTokens)
             if total >= 1_000_000_000 { return String(format: "%.2fB tok", total / 1_000_000_000) }
             if total >= 1_000_000 { return String(format: "%.1fM tok", total / 1_000_000) }
             if total >= 1_000 { return String(format: "%.0fK tok", total / 1_000) }
             return String(format: "%.0f tok", total)
+        case .credits:
+            let cr = store.currentPayload.current.codexCredits
+            if cr >= 1_000_000 { return String(format: "%.1fM cr", cr / 1_000_000) }
+            if cr >= 1_000 { return String(format: "%.1fK cr", cr / 1_000) }
+            // Sub-1K credits keep one decimal only when fractional, so a whole
+            // number reads "42 cr" not "42.0 cr".
+            return cr == cr.rounded() ? String(format: "%.0f cr", cr) : String(format: "%.1f cr", cr)
+        case .cost:
+            return store.currentPayload.current.cost.asCurrency()
         }
-        return store.currentPayload.current.cost.asCurrency()
     }
 
     private func formatTokens(_ n: Double) -> String {

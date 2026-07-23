@@ -26,6 +26,13 @@ export type ModelCosts = {
   fastMultiplier: number
 }
 
+type PriceOverrideRates = {
+  input: number
+  output: number
+  cacheRead?: number
+  cacheCreation?: number
+}
+
 type LiteLLMEntry = {
   input_cost_per_token?: number
   output_cost_per_token?: number
@@ -44,6 +51,49 @@ const ONE_HOUR_CACHE_WRITE_MULTIPLIER_FROM_FIVE_MINUTE_RATE = 1.6
 const FAST_MULTIPLIERS: Record<string, number> = {
   'claude-opus-4-7': 6,
   'claude-opus-4-6': 6,
+}
+
+// Explicit USD/token prices for Cursor's house "composer" models, which have
+// no LiteLLM pricing entry. Cursor publishes these house-model rates in its
+// models table at cursor.com/docs/models (provider "Cursor", USD per 1M
+// tokens): composer-2/2.5: $0.50 input, $2.50 output, $0.20 cache read;
+// composer-1.5: $3.50/$17.50/$0.35; composer-1: $1.25/$10/$0.125. Cursor
+// publishes no separate cache-write rate for these, so cache write uses the
+// input rate. These are self-contained (SnapshotEntry tuples fed through
+// buildOverrideCosts) so they do not depend on the LiteLLM snapshot and win
+// over any stale/aliased pricing. Previously composer-* aliased to Claude
+// Sonnet, which billed Cursor house usage at Anthropic proxy rates.
+const BUILTIN_PRICE_OVERRIDES: Record<string, SnapshotEntry> = {
+  'composer-2.5': [0.5e-6, 2.5e-6, 0.5e-6, 0.2e-6],
+  'composer-2':   [0.5e-6, 2.5e-6, 0.5e-6, 0.2e-6],
+  'composer-1.5': [3.5e-6, 17.5e-6, 3.5e-6, 0.35e-6],
+  'composer-1':   [1.25e-6, 10e-6, 1.25e-6, 0.125e-6],
+}
+
+// Build a ModelCosts from a SnapshotEntry-shaped tuple, applying the same
+// finite/non-negative floors and cache-cost heuristics as loadSnapshot so the
+// override entries behave identically to snapshot entries. Kept self-contained
+// (no tupleToCosts helper in this fork).
+function buildOverrideCosts(raw: SnapshotEntry): ModelCosts {
+  const [input, output, cacheWrite, cacheRead] = raw
+  const inRate = Number.isFinite(input) && input >= 0 ? input : 0
+  const outRate = Number.isFinite(output) && output >= 0 ? output : 0
+  return {
+    inputCostPerToken: inRate,
+    outputCostPerToken: outRate,
+    cacheWriteCostPerToken: typeof cacheWrite === 'number' && Number.isFinite(cacheWrite) && cacheWrite >= 0 ? cacheWrite : inRate * 1.25,
+    cacheWrite1hCostPerToken: inRate * 2,
+    cacheReadCostPerToken: typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0 ? cacheRead : inRate * 0.1,
+    webSearchCostPerRequest: WEB_SEARCH_COST,
+    fastMultiplier: 1,
+  }
+}
+
+function applyBuiltinPriceOverrides(pricing: Map<string, ModelCosts>): Map<string, ModelCosts> {
+  for (const [name, raw] of Object.entries(BUILTIN_PRICE_OVERRIDES)) {
+    pricing.set(name, buildOverrideCosts(raw))
+  }
+  return pricing
 }
 
 function loadSnapshot(): Map<string, ModelCosts> {
@@ -86,7 +136,7 @@ function loadSnapshot(): Map<string, ModelCosts> {
   return map
 }
 
-let pricingCache: Map<string, ModelCosts> = loadSnapshot()
+let pricingCache: Map<string, ModelCosts> = applyBuiltinPriceOverrides(loadSnapshot())
 let sortedPricingKeys: string[] | null = null
 
 function getSortedPricingKeys(): string[] {
@@ -214,7 +264,10 @@ function mergeSnapshotFallbacks(pricing: Map<string, ModelCosts>): Map<string, M
   for (const [name, costs] of loadSnapshot()) {
     if (!pricing.has(name)) pricing.set(name, costs)
   }
-  return pricing
+  // Builtin composer overrides win even over LiteLLM/cache pricing, so
+  // re-apply after the snapshot fill so a freshly fetched pricing map still
+  // uses Cursor-published composer rates rather than any inherited entry.
+  return applyBuiltinPriceOverrides(pricing)
 }
 
 export async function loadPricing(): Promise<void> {
@@ -269,6 +322,22 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'kimi-auto':                     'kimi-k2-thinking',
   'kimi-code':                     'kimi-k2-thinking',
   'kimi-for-coding':               'kimi-k2-thinking',
+  'mimo-v2-flash':                 'xiaomi/mimo-v2-flash',
+  'kat-coder-pro-v1':              'kwaipilot/kat-coder-pro',
+  // ZCode / Hermes run GLM-5.2 (both spellings). Not yet in the bundled
+  // snapshot; price via the GLM-5.1 sibling `glm-5` so cost isn't $0. resolveAlias
+  // lowercases before lookup, so the lowercase entry also covers 'GLM-5.2'. (#537/#544/#545)
+  'GLM-5.2':                        'glm-5',
+  'glm-5.2':                        'glm-5',
+  // Grok Build's own id (`grok-build`/`grok-build-0.1`) isn't in LiteLLM, so
+  // upstream's alias resolves to $0. Price via grok-code-fast-1 — xAI's coding
+  // model that Grok Build runs on — so the default model isn't silently free.
+  // Still flagged costIsEstimated. (#521, corrected)
+  'grok-build':                    'grok-code-fast-1',
+  'grok-build-0.1':                'grok-code-fast-1',
+  // open-design records Codex models with an `openai-codex:` prefix that the
+  // canonicalizer (slash-only) doesn't strip. (#559)
+  'openai-codex:gpt-5.5':          'gpt-5.5',
   // Cursor emits dot-version tier-last names plus tier/reasoning suffixes
   // that LiteLLM does not index (`-high`, `-low`, `-medium`, `-thinking`,
   // `-high-thinking`, `-fast-mode`). Missing aliases here surface as $0 in
@@ -308,6 +377,10 @@ const BUILTIN_ALIASES: Record<string, string> = {
 }
 
 let userAliases: Record<string, string> = {}
+let userPriceOverrides: Map<string, ModelCosts> = new Map()
+let userPriceOverridesConfig: Record<string, PriceOverrideRates> = {}
+let sortedPriceOverrideKeys: string[] | null = null
+let lowercasePriceOverrideIndex: Map<string, ModelCosts> | null = null
 
 // Called once during CLI startup after config is loaded.
 // User aliases take precedence over built-ins.
@@ -315,9 +388,118 @@ export function setModelAliases(aliases: Record<string, string>): void {
   userAliases = aliases
 }
 
+// USD-per-1M -> USD/token, clamped through the same safePerTokenRate guard the
+// snapshot/LiteLLM paths use so a hand-edited config can't cascade NaN/negatives.
+function priceOverrideRatePerToken(usdPerMillion: number | undefined): number | null {
+  if (typeof usdPerMillion !== 'number') return null
+  return safePerTokenRate(usdPerMillion / 1_000_000)
+}
+
+// Called once during CLI startup after config is loaded.
+// Config/CLI rates are USD per 1,000,000 tokens; ModelCosts stores USD/token.
+export function setPriceOverrides(overrides: Record<string, PriceOverrideRates>): void {
+  const next = new Map<string, ModelCosts>()
+  const nextConfig: Record<string, PriceOverrideRates> = {}
+  for (const [model, rates] of Object.entries(overrides)) {
+    if (!model || !rates || typeof rates !== 'object') continue
+    nextConfig[model] = { ...rates }
+    const input = priceOverrideRatePerToken(rates.input)
+    const output = priceOverrideRatePerToken(rates.output)
+    if (input === null || output === null) continue
+    const cacheCreation = priceOverrideRatePerToken(rates.cacheCreation)
+    const cacheRead = priceOverrideRatePerToken(rates.cacheRead)
+    // Build ModelCosts inline (mirrors loadSnapshot): default cache-write from
+    // 1.25× input and cache-read from 0.1× input when the override omits them.
+    next.set(model, {
+      inputCostPerToken: input,
+      outputCostPerToken: output,
+      cacheWriteCostPerToken: cacheCreation ?? input * 1.25,
+      cacheWrite1hCostPerToken: input * 2,
+      cacheReadCostPerToken: cacheRead ?? input * 0.1,
+      webSearchCostPerRequest: WEB_SEARCH_COST,
+      fastMultiplier: 1,
+    })
+  }
+  userPriceOverrides = next
+  userPriceOverridesConfig = nextConfig
+  sortedPriceOverrideKeys = null
+  lowercasePriceOverrideIndex = null
+}
+
+function getSortedPriceOverrideKeys(): string[] {
+  if (sortedPriceOverrideKeys === null) {
+    sortedPriceOverrideKeys = Array.from(userPriceOverrides.keys()).sort((a, b) => b.length - a.length)
+  }
+  return sortedPriceOverrideKeys
+}
+
+function getLowercasePriceOverrideIndex(): Map<string, ModelCosts> {
+  if (lowercasePriceOverrideIndex === null) {
+    lowercasePriceOverrideIndex = new Map()
+    for (const [key, costs] of userPriceOverrides) {
+      const lk = key.toLowerCase()
+      if (!lowercasePriceOverrideIndex.has(lk)) lowercasePriceOverrideIndex.set(lk, costs)
+    }
+  }
+  return lowercasePriceOverrideIndex
+}
+
+function getPriceOverrideExact(...keys: string[]): ModelCosts | null {
+  for (const key of keys) {
+    const costs = userPriceOverrides.get(key)
+    if (costs) return costs
+  }
+  return null
+}
+
+function getPriceOverridePrefix(canonical: string): ModelCosts | null {
+  for (const key of getSortedPriceOverrideKeys()) {
+    if (canonical.startsWith(key + '-') || canonical === key) {
+      return userPriceOverrides.get(key)!
+    }
+  }
+  return null
+}
+
+function getPriceOverrideCaseInsensitive(canonical: string, withPrefix: string): ModelCosts | null {
+  const lowerIndex = getLowercasePriceOverrideIndex()
+  return lowerIndex.get(canonical.toLowerCase()) ?? lowerIndex.get(withPrefix.toLowerCase()) ?? null
+}
+
+// Deterministic fingerprint of the configured overrides. Used by the daily
+// cache to invalidate when override rates change (config values, not the
+// per-token ModelCosts, so the empty-override hash stays '').
+export function getPriceOverridesConfigHash(): string {
+  // Control-char field (0x01) / record (0x02) separators so a value that
+  // contains a plain delimiter can't forge a hash collision. Matches the
+  // getLocalModelSavingsConfigHash convention upstream.
+  const FIELD_SEP = String.fromCharCode(1)
+  const RECORD_SEP = String.fromCharCode(2)
+  // The builtin composer overrides participate so that editing
+  // BUILTIN_PRICE_OVERRIDES in a release invalidates cached daily costs the
+  // same way a user override does — otherwise days finalized under the old
+  // composer pricing (Sonnet proxy rates) would never be recomputed.
+  const builtin = `builtin${FIELD_SEP}${JSON.stringify(BUILTIN_PRICE_OVERRIDES)}`
+  const keys = Object.keys(userPriceOverridesConfig).sort()
+  if (keys.length === 0) return builtin
+  const parts = keys.map(k => {
+    const rates = userPriceOverridesConfig[k]!
+    return [
+      k,
+      rates.input,
+      rates.output,
+      rates.cacheRead ?? '',
+      rates.cacheCreation ?? '',
+    ].join(FIELD_SEP)
+  })
+  return [builtin, ...parts].join(RECORD_SEP)
+}
+
 function resolveAlias(model: string): string {
   if (Object.hasOwn(userAliases, model)) return userAliases[model]!
   if (Object.hasOwn(BUILTIN_ALIASES, model)) return BUILTIN_ALIASES[model]!
+  const lowercase = model.toLowerCase()
+  if (lowercase !== model && Object.hasOwn(BUILTIN_ALIASES, lowercase)) return BUILTIN_ALIASES[lowercase]!
   return model
 }
 function getCanonicalName(model: string): string {
@@ -327,13 +509,40 @@ function getCanonicalName(model: string): string {
     .replace(/^[^/]+\//, '') // strip provider prefix: anthropic/foo -> foo
 }
 
+// Some models are indexed by LiteLLM under a base id but reported with a
+// pricing-equivalent suffix (`:thinking`, `:cloud`, `-TEE`). Strip a known
+// suffix so the base entry is found instead of falling through to $0. (#634)
+function stripKnownPricingVariantSuffix(model: string): string | null {
+  const withoutColonSuffix = model.replace(/:(thinking|cloud)$/i, '')
+  if (withoutColonSuffix !== model) return withoutColonSuffix
+
+  const withoutTeeSuffix = model.replace(/-TEE$/i, '')
+  if (withoutTeeSuffix !== model) return withoutTeeSuffix
+
+  return null
+}
+
 export function getModelCosts(model: string): ModelCosts | null {
   // Try with provider prefix preserved (azure/gpt-5.4, openrouter/anthropic/claude-opus-4.6)
   const withPrefix = model.replace(/@.*$/, '').replace(/-\d{8}$/, '')
+  const canonicalName = getCanonicalName(model)
+  const canonical = resolveAlias(canonicalName)
+
+  // A user price override is authoritative: it must win over snapshot/LiteLLM
+  // pricing and over configured aliases. Checked exact-first (raw model,
+  // prefixed, pre-alias canonical, resolved canonical) before any cache hit.
+  const override = getPriceOverrideExact(model, withPrefix, canonicalName, canonical)
+  if (override) return override
+
   if (pricingCache.has(withPrefix)) return pricingCache.get(withPrefix)!
 
-  const canonical = resolveAlias(getCanonicalName(model))
   if (pricingCache.has(canonical)) return pricingCache.get(canonical)!
+
+  // Prefix override before the sorted-key snapshot scan, so `gpt-5` overrides
+  // `gpt-5-foo` — but only after the exact snapshot checks above, so a more
+  // specific snapshot entry (`gpt-5-mini`) still wins for its own id.
+  const prefixOverride = getPriceOverridePrefix(canonical)
+  if (prefixOverride) return prefixOverride
 
   // Iterate keys longest-first so a model id like `gpt-5-mini` matches the
   // `gpt-5-mini` entry rather than collapsing to the shorter `gpt-5` entry
@@ -342,6 +551,26 @@ export function getModelCosts(model: string): ModelCosts | null {
     if (canonical.startsWith(key + '-') || canonical === key) {
       return pricingCache.get(key)!
     }
+  }
+
+  // Case-insensitive override as a last resort before falling through to the
+  // suffix-variant retry and $0. Never changes an exact/prefix match above.
+  const caseInsensitiveOverride = getPriceOverrideCaseInsensitive(canonical, withPrefix)
+  if (caseInsensitiveOverride) return caseInsensitiveOverride
+
+  // Last resort: strip a known pricing-equivalent suffix (`:thinking`,
+  // `:cloud`, `-TEE`) and re-resolve, so a variant prices like its base
+  // instead of falling through to $0. (#634)
+  const withPrefixVariant = stripKnownPricingVariantSuffix(withPrefix)
+  if (withPrefixVariant && withPrefixVariant !== withPrefix) {
+    const variantCosts = getModelCosts(withPrefixVariant)
+    if (variantCosts) return variantCosts
+  }
+
+  const canonicalVariant = stripKnownPricingVariantSuffix(canonical)
+  if (canonicalVariant && canonicalVariant !== canonical && canonicalVariant !== withPrefixVariant) {
+    const variantCosts = getModelCosts(canonicalVariant)
+    if (variantCosts) return variantCosts
   }
 
   return null
@@ -459,6 +688,8 @@ const autoModelNames: Record<string, string> = {
 }
 
 const SHORT_NAMES: Record<string, string> = {
+  // ZCode/Hermes GLM-5.2 resolves to the priced `glm-5` sibling; label it. (#537)
+  'glm-5': 'GLM-5',
   // TEMP (2026-06-09): until deriveClaudeShortName or LiteLLM cover them. (upstream #463)
   'claude-fable-5': 'Fable 5',
   'claude-mythos-5': 'Mythos 5',
@@ -487,6 +718,7 @@ const SHORT_NAMES: Record<string, string> = {
   'gpt-5.4-nano': 'GPT-5.4 Nano',
   'gpt-5.4-mini': 'GPT-5.4 Mini',
   'gpt-5.4': 'GPT-5.4',
+  'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark',
   'gpt-5.3-codex': 'GPT-5.3 Codex',
   'gpt-5.3': 'GPT-5.3',
   'gpt-5.2-pro': 'GPT-5.2 Pro',

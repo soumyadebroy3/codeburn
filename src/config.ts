@@ -51,6 +51,8 @@ export type CodeburnConfig = {
    */
   plans?: Record<string, Plan>
   modelAliases?: Record<string, string>
+  // Rates are stored as USD per 1,000,000 tokens; models.ts converts them to per-token ModelCosts.
+  priceOverrides?: Record<string, { input: number; output: number; cacheRead?: number; cacheCreation?: number }>
   network?: NetworkPolicy
 }
 
